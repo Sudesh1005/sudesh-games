@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>Kaathu Cricket</title>
+  <meta name="description" content="3D cricket in the browser: bat and bowl against the computer, or play a friend online with a match code.">
+  <meta name="theme-color" content="#0d0b1e">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bungee&family=Rubik:wght@400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <script type="importmap">
+    { "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    } }
+  </script>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="hud" class="hidden">
+    <div id="score">
+      <div class="sc-top"><i id="sc-dot"></i><b id="sc-team">You</b><span id="sc-score">0/0</span><small id="sc-overs">(0.0/2)</small></div>
+      <div id="sc-line"></div>
+    </div>
+    <div id="over"></div>
+    <div id="role"></div>
+    <div id="tools"><button id="sound" aria-label="Sound on or off">🔊</button><button id="quit" aria-label="Quit match">✕</button></div>
+    <div id="banner"><div id="ban-t"></div><div id="ban-s"></div></div>
+    <div id="toast"></div>
+    <div id="timing"></div>
+    <div id="waitmsg"></div>
+    <div id="hint"></div>
+
+    <div id="bat-panel" class="panel hidden">
+      <div class="dirs">
+        <button data-dir="1" aria-label="Off side">◀</button>
+        <button data-dir="0" aria-label="Straight">▲</button>
+        <button data-dir="-1" aria-label="Leg side">▶</button>
+        <button data-dir="null" class="on">AUTO</button>
+      </div>
+      <button id="b-loft">LOFT</button>
+      <button id="b-hit">HIT</button>
+    </div>
+
+    <div id="bowl-panel" class="panel hidden">
+      <div class="types">
+        <button data-bt="pace" class="on">PACE</button>
+        <button data-bt="off">OFF SPIN</button>
+        <button data-bt="leg">LEG SPIN</button>
+      </div>
+      <div id="meter"><div class="zone"></div><div id="needle"></div></div>
+      <button id="b-bowl">BOWL</button>
+    </div>
+  </div>
+
+  <div id="menu" class="hidden">
+    <div class="panel-l">
+      <div class="logo"><span class="l1">KAATHU</span><span class="l2">CRICKET</span></div>
+      <p class="tag">Bat and bowl in a short 3D match against the computer, or challenge a friend online.</p>
+      <label class="lbl" for="m-name">Your name</label>
+      <input id="m-name" maxlength="14" placeholder="Type your name" autocomplete="nickname">
+
+      <h3>Match settings <span>(the player who creates the match decides)</span></h3>
+      <div class="opts">
+        <label>Overs</label><div class="seg" id="o-overs"><button data-v="1">1</button><button data-v="2">2</button><button data-v="3">3</button><button data-v="5">5</button></div>
+        <label>Wickets</label><div class="seg" id="o-wkts"><button data-v="1">1</button><button data-v="2">2</button><button data-v="3">3</button><button data-v="5">5</button></div>
+        <label>Who bats first</label><div class="seg" id="o-toss"><button data-v="toss">Toss</button><button data-v="bat">I bat</button><button data-v="bowl">I bowl</button></div>
+        <label>Computer</label><div class="seg" id="o-level"><button data-v="easy">Easy</button><button data-v="normal">Normal</button><button data-v="hard">Hard</button></div>
+      </div>
+
+      <button id="m-single" class="big">PLAY VS COMPUTER</button>
+      <h3>Play a friend online</h3>
+      <button id="m-create" class="big alt">CREATE ONLINE MATCH</button>
+      <div class="or"><span>or join with your friend's code</span></div>
+      <div class="row"><input id="m-code" maxlength="6" placeholder="MATCH CODE" autocomplete="off" autocapitalize="characters" spellcheck="false"><button id="m-join">JOIN</button></div>
+      <p id="lb-status"></p>
+      <p id="rec"></p>
+
+      <div class="help">
+        <b>Batting:</b> <span class="desk">press <kbd>Space</kbd> or click as the ball reaches you. <kbd>←</kbd> <kbd>↑</kbd> <kbd>→</kbd> choose the direction, hold <kbd>Shift</kbd> to hit it in the air.</span><span class="mob">tap HIT as the ball reaches you. Pick a direction and LOFT before the ball arrives.</span><br>
+        <b>Bowling:</b> <span class="desk">move the mouse to pick where the ball pitches, <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> for pace / off spin / leg spin, then click when the needle is in the middle.</span><span class="mob">drag on the pitch to aim, pick the delivery, then tap BOWL when the needle is in the middle.</span>
+      </div>
+      <div class="links"><a href="../" class="ghost">&larr; All Games</a></div>
+    </div>
+  </div>
+
+  <div id="lobby" class="overlay hidden">
+    <div class="card">
+      <h2>ONLINE MATCH</h2>
+      <div class="codebox"><div><span>MATCH CODE</span><b id="lb-code"></b></div><button id="lb-copy">COPY INVITE LINK</button></div>
+      <p id="lb-info"></p>
+      <ul id="lb-players"></ul>
+      <button id="lb-start" class="primary">START MATCH</button>
+      <p id="lb-wait"></p>
+      <button id="lb-leave">LEAVE</button>
+    </div>
+  </div>
+
+  <div id="toss" class="overlay hidden">
+    <div class="card">
+      <div id="coin"><div class="face h">H</div><div class="face t">T</div></div>
+      <h2 id="toss-t">Call the toss</h2>
+      <div id="toss-btns"></div>
+    </div>
+  </div>
+
+  <div id="brk" class="overlay hidden">
+    <div class="card"><h2 id="brk-t">INNINGS BREAK</h2><p id="brk-s"></p><button id="brk-go" class="primary">CONTINUE</button></div>
+  </div>
+
+  <div id="res" class="overlay hidden">
+    <div class="card wide">
+      <h2 id="res-t">YOU WON!</h2>
+      <p id="res-s"></p>
+      <table id="res-table"></table>
+      <button id="res-again" class="primary">PLAY AGAIN</button>
+      <p id="res-wait"></p>
+      <button id="res-menu">MENU</button>
+    </div>
+  </div>
+
+  <div id="loading"><div class="spinner"></div><div>Loading stadium…</div></div>
+  <div id="err"></div>
+  <script>
+    window.addEventListener('error', function (e) {
+      var el = document.getElementById('err'); el.style.display = 'block';
+      el.textContent += 'Error: ' + (e.message || e) + (e.filename ? ' (' + e.filename.split('/').pop() + ':' + e.lineno + ')' : '') + '\n';
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+      var el = document.getElementById('err'); el.style.display = 'block';
+      el.textContent += 'Error: ' + (e.reason && e.reason.message || e.reason) + '\n';
+    });
+    if (location.protocol === 'file:') {
+      document.getElementById('loading').innerHTML = '<div class="fileWarn">This page was opened as a file, and browsers block games loaded that way.<br>Double-click <b>play.bat</b> in the Games folder, or open it from GitHub Pages.</div>';
+    }
+  </script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
