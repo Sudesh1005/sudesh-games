@@ -1,0 +1,26 @@
+{
+  "name": "Sudesh Games",
+  "short_name": "Games",
+  "description": "Browser games: open-world city, car and bike racing, target shooting and cricket.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "landscape",
+  "background_color": "#0d0b1e",
+  "theme_color": "#0d0b1e",
+  "categories": ["games", "entertainment"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Kadal Nagaram", "url": "GTA-Game/" },
+    { "name": "Vegam Racing", "url": "Car-Race/" },
+    { "name": "Kaathu Riders", "url": "Bike-Race/" },
+    { "name": "Target Shooter", "url": "Target-Shooter/" },
+    { "name": "Kaathu Cricket", "url": "Cricket-Game/" }
+  ]
+}

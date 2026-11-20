@@ -7,6 +7,7 @@ import { Rider } from './ai.js';
 import { Traffic } from './traffic.js';
 import { Input } from './input.js';
 import { RaceAudio } from './audio.js';
+import { loadRiders } from './models.js';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -498,8 +499,8 @@ function raceFrame(dt) {
 function menuFrame(dt) {
   const b = G.preview;
   if (!b) return;
-  G.menuAng += dt * 0.25;
-  const a = G.menuAng, rr = 4.6;
+  G.menuAng = params.has('orbit') ? +params.get('orbit') : G.menuAng + dt * 0.25;
+  const a = G.menuAng, rr = +params.get('rr') || 4.6;
   camera.position.set(b.x + Math.sin(a) * rr, 1.6 + Math.sin(a * 0.7) * 0.4, b.z + Math.cos(a) * rr);
   camera.lookAt(b.x, 0.8, b.z);
   if (camera.fov !== 50) { camera.fov = 50; camera.updateProjectionMatrix(); }
@@ -561,5 +562,15 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) pause
 loadRoute(S.route);
 showMenu();
 $('loading').classList.add('hidden');
+// realistic riders: the same character models as the Kadal Nagaram city game (built-in riders until they load)
+if (!params.has('simple')) {
+  const files = ['player.glb', 'ped1.glb', 'ped2.glb', 'ped3.glb', 'thug.glb'];
+  const heights = { 'player.glb': 1.78, 'ped1.glb': 1.72, 'ped2.glb': 1.75, 'ped3.glb': 1.73, 'thug.glb': 1.8 };
+  loadRiders('../GTA-Game/models/', files, heights).then((lib) => {
+    if (!lib) return;
+    for (const b of G.bikes) b.upgradeRider();
+    if (G.preview) G.preview.upgradeRider();
+  }).catch(() => {});
+}
 if (params.has('auto')) startRace();
 requestAnimationFrame(frame);

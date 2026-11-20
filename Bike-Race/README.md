@@ -1,6 +1,6 @@
 # Kaathu Riders
 
-A 3D motorbike racing game that runs in the browser. Race point to point through traffic: weave past cars, auto-rickshaws, buses and trucks, and don't hit them. Built with plain HTML, CSS and JavaScript plus [three.js](https://threejs.org) from a CDN. There's no build step and there are no asset files: roads, bikes, riders, traffic, scenery and sound are all generated in code.
+A 3D motorbike racing game that runs in the browser. Race point to point through traffic: weave past cars, auto-rickshaws, buses and trucks, and don't hit them. Built with plain HTML, CSS and JavaScript plus [three.js](https://threejs.org) from a CDN. There's no build step. Roads, bikes, traffic, scenery and sound are generated in code. The riders are the realistic character models from Kadal Nagaram (`../GTA-Game/models/`), dressed in a riding suit in the bike's colour with a full-face helmet and gloves, crouched over the tank and leaning into the turns. Until those load (or with `?simple`) a built-in rider is used.
 
 ## Features
 
@@ -52,7 +52,10 @@ css/style.css   styles
 js/main.js      menu, race flow, traffic collisions and near misses, camera, HUD, main loop
 js/road.js      route generation and themes, road/shoulder/barrier geometry, scenery, road queries
 js/traffic.js   traffic vehicles and lane flow
-js/bike.js      bike + rider models, lean, wheelie, crash and riding physics
+js/bike.js      detailed bike models (alloy wheels, disc brakes, fork, engine, exhaust, fairing), lean, wheelie, crash and riding physics
+js/rider.js     the rider: character model, riding gear and riding pose
+js/models.js    character model loader (from Kadal Nagaram)
+js/human.js     built-in rider used until the models load
 js/ai.js        rival riders
 js/input.js     keyboard, touch buttons and gamepad
 js/audio.js     synthesised sound

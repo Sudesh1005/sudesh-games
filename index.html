@@ -62,7 +62,14 @@
     footer { margin-top: 40px; color: var(--muted); font-size: 12px; text-align: center; }
     .empty { color: var(--muted); padding: 30px; text-align: center; grid-column: 1 / -1; }
     @media (max-width: 520px) { .wrap { padding-top: 22px; } .grid { gap: 14px; } }
+    /* phones held sideways: compact header, three games per row */
+    @media (orientation: landscape) and (max-height: 520px) {
+      .wrap { padding: 14px max(16px, env(safe-area-inset-right)) 28px max(16px, env(safe-area-inset-left)); }
+      header { margin-bottom: 14px; } h1 { font-size: 40px; } .sub { font-size: 13px; margin-top: 4px; }
+      .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    }
   </style>
+  <script src="pwa.js"></script>
 </head>
 <body>
   <div class="wrap">
