@@ -1,0 +1,16 @@
+{
+  "player": "player.fbx",
+  "peds": ["ped1.fbx", "ped2.fbx", "ped3.fbx", "ped4.fbx"],
+  "thug": "thug.fbx",
+  "animations": {
+    "idle": "idle.fbx",
+    "walk": "walk.fbx",
+    "run": "run.fbx",
+    "sprint": "sprint.fbx",
+    "punch": "punch.fbx",
+    "kick": "kick.fbx",
+    "block": "block.fbx",
+    "sit": "sit.fbx",
+    "fall": "fall.fbx"
+  }
+}

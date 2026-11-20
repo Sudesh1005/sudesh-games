@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>Kadal Nagaram</title>
+  <meta name="description" content="An open-world 3D city by the sea. Drive, explore and take on missions right in your browser.">
+  <meta name="theme-color" content="#1b1036">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bungee&family=Rubik:wght@400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <script type="importmap">
+    { "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    } }
+  </script>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="hud" class="hidden">
+    <div id="topright">
+      <div id="clock">17:00</div>
+      <div id="money">₹0</div>
+      <div id="stars"></div>
+      <div class="bar"><div id="hp"></div></div>
+      <div class="bar veh hidden" id="vbar"><div id="vhp"></div></div>
+    </div>
+    <div id="minimap-wrap"><canvas id="minimap" width="200" height="200"></canvas></div>
+    <div id="mission" class="hidden"><div id="m-title"></div><div id="m-obj"></div><div id="m-timer"></div></div>
+    <div id="hint" class="hidden"></div>
+    <div id="toast"></div>
+    <div id="area"></div>
+    <div id="speedo" class="hidden"><span id="spd">0</span><small>km/h</small></div>
+    <div id="radio" class="hidden"></div>
+    <div id="dmg"></div>
+    <div id="big" class="hidden"><div id="big-title"></div><div id="big-sub"></div></div>
+    <button id="pauseBtn" aria-label="Pause">II</button>
+  </div>
+
+  <div id="touch">
+    <div id="joy"><div id="knob"></div></div>
+    <div id="btns">
+      <button data-key="KeyF" class="b-car">CAR</button>
+      <button data-key="KeyE" class="b-act">ACT</button>
+      <button data-key="Space" class="b-jump">JUMP<small>BRAKE</small></button>
+      <button data-key="ShiftLeft" class="b-run">RUN</button>
+    </div>
+    <div id="btns2">
+      <button data-key="KeyQ">KICK</button>
+      <button data-key="KeyC">BLOCK</button>
+      <button data-key="KeyH">HORN</button>
+      <button data-key="KeyR">RADIO</button>
+      <button data-key="KeyM">SOUND</button>
+    </div>
+  </div>
+
+  <div id="menu">
+    <div class="card">
+      <div class="logo"><span class="l1">KADAL</span><span class="l2">NAGARAM</span></div>
+      <p class="tag">An open city by the sea. Drive, explore, take on jobs and stay ahead of the cops.</p>
+      <div id="loc">
+        <div class="loc-cur">
+          <span class="loc-label">Location</span>
+          <span id="loc-name">Kadal Nagaram (fictional city)</span>
+          <button id="loc-change" class="ghost">Change</button>
+        </div>
+        <div id="loc-panel" class="hidden">
+          <p class="loc-ask">Where do you want to play? Pick a real place or search for any area.</p>
+          <form id="loc-form">
+            <input id="loc-q" type="search" placeholder="Search a place, e.g. Mylapore, Chennai" autocomplete="off">
+            <button type="submit">Search</button>
+          </form>
+          <div id="loc-results"></div>
+          <div class="loc-presets">
+            <button data-lat="13.0500" data-lon="80.2824" data-name="Marina Beach, Chennai">Marina Beach</button>
+            <button data-lat="13.0418" data-lon="80.2341" data-name="T. Nagar, Chennai">T. Nagar</button>
+            <button data-lat="13.0339" data-lon="80.2676" data-name="Mylapore, Chennai">Mylapore</button>
+            <button data-lat="13.0002" data-lon="80.2668" data-name="Besant Nagar, Chennai">Besant Nagar</button>
+            <button data-lat="9.9195" data-lon="78.1193" data-name="Meenakshi Temple area, Madurai">Madurai</button>
+            <button data-lat="11.0094" data-lon="76.9497" data-name="R.S. Puram, Coimbatore">Coimbatore</button>
+            <button data-lat="11.9340" data-lon="79.8360" data-name="Promenade, Puducherry">Puducherry</button>
+            <button data-lat="12.9756" data-lon="77.6050" data-name="MG Road, Bengaluru">Bengaluru</button>
+          </div>
+          <div class="loc-row2">
+            <button id="loc-gps" class="ghost">Use my location</button>
+            <button id="loc-fict" class="ghost">Kadal Nagaram (fictional)</button>
+            <label>Area size
+              <select id="loc-size"><option value="450">Small</option><option value="650" selected>Medium</option><option value="900">Large</option></select>
+            </label>
+          </div>
+          <p id="loc-err" class="loc-err hidden"></p>
+          <p class="attr-note">Real maps use free data © OpenStreetMap contributors (ODbL). Searching sends your search text to OpenStreetMap's servers.</p>
+        </div>
+      </div>
+      <p id="menu-state" class="state">Loading city…</p>
+      <button id="play">PLAY</button>
+      <div class="controls desk">
+        <div><kbd>W A S D</kbd><span>Move / drive</span></div>
+        <div><kbd>Mouse</kbd><span>Look around</span></div>
+        <div><kbd>Shift</kbd><span>Sprint</span></div>
+        <div><kbd>Space</kbd><span>Jump / handbrake</span></div>
+        <div><kbd>F</kbd><span>Enter / exit vehicle</span></div>
+        <div><kbd>E</kbd> <kbd>Click</kbd><span>Punch combo / start mission</span></div>
+        <div><kbd>Q</kbd><span>Kick</span></div>
+        <div><kbd>C</kbd> <kbd>Right-click</kbd><span>Block</span></div>
+        <div><kbd>H</kbd><span>Horn</span></div>
+        <div><kbd>R</kbd><span>Change radio station</span></div>
+        <div><kbd>M</kbd><span>Sound on / off</span></div>
+        <div><kbd>Esc</kbd> <kbd>P</kbd><span>Pause</span></div>
+      </div>
+      <div class="controls mob">
+        <div><kbd>Left stick</kbd><span>Move / drive</span></div>
+        <div><kbd>Drag right</kbd><span>Look around</span></div>
+        <div><kbd>CAR</kbd><span>Enter / exit</span></div>
+        <div><kbd>ACT</kbd><span>Punch / start mission</span></div>
+        <div><kbd>JUMP</kbd><span>Jump / brake</span></div>
+        <div><kbd>KICK</kbd> <kbd>BLOCK</kbd><span>Fight moves</span></div>
+        <div><kbd>HORN</kbd> <kbd>RADIO</kbd><span>While driving</span></div>
+      </div>
+      <p class="tips">8 missions around the city: walk into a glowing marker to start one. Punch three times quickly for a power hit. Gold coins are worth ₹50, red gems restore health. Some people fight back!</p>
+      <div class="menu-links"><a href="../" class="ghost">&larr; All Games</a> <button id="reset" class="ghost">Reset progress</button></div>
+    </div>
+  </div>
+  <div id="loading" class="hidden">
+    <div class="ld-card">
+      <div class="spinner"></div>
+      <div id="loading-title">Loading map</div>
+      <div id="loading-msg">Preparing…</div>
+      <div class="ld-note">Map data © OpenStreetMap contributors</div>
+    </div>
+  </div>
+  <div id="attr" class="hidden">© OpenStreetMap contributors</div>
+  <div id="fade"></div>
+  <div id="err"></div>
+
+  <script>
+    window.addEventListener('error', function (e) {
+      var el = document.getElementById('err');
+      el.style.display = 'block';
+      el.textContent += 'Error: ' + (e.message || e) + (e.filename ? ' (' + e.filename.split('/').pop() + ':' + e.lineno + ')' : '') + '\n';
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+      var el = document.getElementById('err');
+      el.style.display = 'block';
+      el.textContent += 'Error: ' + (e.reason && e.reason.message || e.reason) + '\n';
+    });
+  </script>
+  <script>
+    if (location.protocol === 'file:') {
+      var st = document.getElementById('menu-state');
+      st.className = 'state warn';
+      st.innerHTML = 'This page was opened as a file, and browsers block games loaded that way.<br>' +
+        'Double-click <b>play.bat</b> in the game folder, or open it from GitHub Pages.';
+    }
+  </script>
+  <script type="module" src="js/location.js"></script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

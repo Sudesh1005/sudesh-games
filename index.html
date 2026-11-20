@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Games</title>
+  <meta name="description" content="Browser games: open-world city, racing and more.">
+  <meta name="theme-color" content="#0d0b1e">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bungee&family=Rubik:wght@400;600;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0d0b1e; --bg2: #1a1236; --card: #17142c; --line: rgba(255, 255, 255, 0.1);
+      --text: #f4f1ff; --muted: #a9a3c9; --gold: #ffd23f; --hot: #ff6b4a; --cool: #4dd2ff;
+      --display: 'Bungee', 'Impact', sans-serif; --ui: 'Rubik', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      background: radial-gradient(1200px 600px at 20% -10%, #3a1f6b 0%, transparent 60%),
+                  radial-gradient(900px 500px at 110% 10%, #5a1d3a 0%, transparent 55%), var(--bg);
+      color: var(--text); font-family: var(--ui);
+    }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 32px 16px 56px; }
+    header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 28px; }
+    h1 {
+      font: clamp(44px, 9vw, 84px) / 0.95 var(--display); margin: 0; letter-spacing: 2px;
+      background: linear-gradient(180deg, #fff3b0, #ffb347 50%, #ff5e62); -webkit-background-clip: text; background-clip: text; color: transparent;
+      filter: drop-shadow(0 5px 0 rgba(0, 0, 0, 0.5));
+    }
+    .sub { color: var(--muted); margin: 8px 0 0; font-size: 15px; }
+    .filters { display: flex; gap: 8px; flex-wrap: wrap; }
+    .chip { font: 600 13px var(--ui); color: var(--muted); background: rgba(255, 255, 255, 0.06); border: 1px solid var(--line); padding: 7px 14px; border-radius: 999px; cursor: pointer; }
+    .chip.on { color: #1a1236; background: var(--gold); border-color: var(--gold); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); gap: 20px; }
+    body { overflow-x: hidden; }
+    .card, .body, .desc { min-width: 0; }
+    .card {
+      position: relative; display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--line);
+      border-radius: 18px; overflow: hidden; text-decoration: none; color: inherit;
+      transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+    }
+    .card.ready:hover, .card.ready:focus-visible { transform: translateY(-4px); border-color: rgba(255, 210, 63, 0.6); box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 210, 63, 0.3); outline: none; }
+    .thumb { aspect-ratio: 16 / 9; position: relative; overflow: hidden; display: grid; place-items: center; }
+    .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 0.4s ease; }
+    .card.ready:hover .thumb img { transform: scale(1.05); }
+    .thumb svg { width: 42%; height: auto; opacity: 0.95; filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.35)); }
+    .badge { position: absolute; top: 12px; left: 12px; font: 11px var(--display); letter-spacing: 1px; padding: 5px 10px; border-radius: 8px; }
+    .badge.play { background: var(--gold); color: #1a1236; }
+    .badge.soon { background: rgba(0, 0, 0, 0.55); color: #fff; border: 1px solid rgba(255, 255, 255, 0.25); }
+    .body { padding: 16px 16px 18px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+    .title { font: 20px var(--display); letter-spacing: 0.5px; margin: 0; }
+    .desc { color: var(--muted); font-size: 14px; line-height: 1.45; margin: 0; flex: 1; }
+    .tags { display: flex; gap: 6px; flex-wrap: wrap; }
+    .tag { font-size: 11px; font-weight: 600; color: #d9d4ff; background: rgba(255, 255, 255, 0.07); padding: 3px 8px; border-radius: 6px; }
+    .cta { margin-top: 6px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; font: 15px var(--display); letter-spacing: 2px; padding: 11px 16px; border-radius: 12px; }
+    .ready .cta { background: linear-gradient(180deg, #ffe066, #ffb347); color: #1a1236; box-shadow: 0 4px 0 #b86b00; }
+    .soon .cta { background: rgba(255, 255, 255, 0.06); color: var(--muted); border: 1px dashed rgba(255, 255, 255, 0.2); }
+    .card.soon { cursor: default; }
+    .card.soon .thumb { filter: saturate(0.85); }
+    footer { margin-top: 40px; color: var(--muted); font-size: 12px; text-align: center; }
+    .empty { color: var(--muted); padding: 30px; text-align: center; grid-column: 1 / -1; }
+    @media (max-width: 520px) { .wrap { padding-top: 22px; } .grid { gap: 14px; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>Games</h1>
+        <p class="sub">Pick a game and play right in your browser.</p>
+      </div>
+      <div class="filters" id="filters"></div>
+    </header>
+    <main class="grid" id="grid"></main>
+    <footer>Made with three.js · Map data in Kadal Nagaram © OpenStreetMap contributors</footer>
+  </div>
+
+  <script>
+    // Add a new game here: put its folder next to this file and set status to 'ready'.
+    const GAMES = [
+      {
+        id: 'kadal-nagaram', title: 'Kadal Nagaram', path: 'GTA-Game/', status: 'ready', genre: 'Open World',
+        desc: 'Open-world city by the sea. Drive cars, autos and bikes, take on missions, outrun the cops, or play on real maps of your own area.',
+        tags: ['3D', 'Missions', 'Real maps'], img: 'assets/kadal-nagaram.jpg',
+      },
+      {
+        id: 'car-race', title: 'Car Race', path: 'car-race/', status: 'soon', genre: 'Racing',
+        desc: 'Street circuits, drifting and time trials against rival drivers.', tags: ['Racing', '3D'],
+        art: ['#ff512f', '#dd2476'], icon: 'car',
+      },
+      {
+        id: 'bike-race', title: 'Bike Race', path: 'bike-race/', status: 'soon', genre: 'Racing',
+        desc: 'High-speed motorbike races through city traffic and hill roads.', tags: ['Racing', 'Bikes'],
+        art: ['#11998e', '#38ef7d'], icon: 'bike',
+      },
+      {
+        id: 'gun-game', title: 'Target Shooter', path: 'gun-game/', status: 'soon', genre: 'Shooter',
+        desc: 'Aim, reload and clear the arena. Target practice and wave challenges.', tags: ['Action', 'FPS'],
+        art: ['#4568dc', '#b06ab3'], icon: 'target',
+      },
+    ];
+
+    const ICONS = {
+      car: '<svg viewBox="0 0 120 60" fill="none"><path d="M10 40c0-6 4-9 10-10l14-12c3-2 6-3 10-3h26c4 0 7 1 10 4l11 11c8 1 19 3 19 10v6c0 2-2 4-4 4H14c-2 0-4-2-4-4z" fill="#fff"/><path d="M40 18h18v12H30zM62 18h12c2 0 3 1 4 2l9 10H62z" fill="#2b1d4a" opacity=".55"/><circle cx="32" cy="48" r="9" fill="#1a1236"/><circle cx="32" cy="48" r="4" fill="#ddd"/><circle cx="92" cy="48" r="9" fill="#1a1236"/><circle cx="92" cy="48" r="4" fill="#ddd"/></svg>',
+      bike: '<svg viewBox="0 0 120 70" fill="none"><circle cx="24" cy="48" r="16" stroke="#fff" stroke-width="6"/><circle cx="96" cy="48" r="16" stroke="#fff" stroke-width="6"/><path d="M24 48l22-24h22l12 10 16 14M46 24l14 24h20M70 24l8-10h12" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><rect x="48" y="18" width="20" height="8" rx="4" fill="#fff"/></svg>',
+      target: '<svg viewBox="0 0 100 100" fill="none"><circle cx="50" cy="50" r="40" stroke="#fff" stroke-width="7"/><circle cx="50" cy="50" r="24" stroke="#fff" stroke-width="7"/><circle cx="50" cy="50" r="8" fill="#fff"/><path d="M50 2v20M50 78v20M2 50h20M78 50h20" stroke="#fff" stroke-width="7" stroke-linecap="round"/></svg>',
+    };
+
+    const grid = document.getElementById('grid'), filters = document.getElementById('filters');
+    let current = 'All';
+    try { current = localStorage.getItem('games-filter') || 'All'; } catch (_) { /* ignore */ }
+
+    function card(g) {
+      const ready = g.status === 'ready';
+      const el = document.createElement(ready ? 'a' : 'div');
+      el.className = 'card ' + (ready ? 'ready' : 'soon');
+      if (ready) { el.href = g.path; el.setAttribute('aria-label', 'Play ' + g.title); }
+      const thumb = g.img
+        ? `<img src="${g.img}" alt="${g.title} screenshot" loading="lazy">`
+        : `<div style="position:absolute;inset:0;background:linear-gradient(135deg,${g.art[0]},${g.art[1]})"></div>${ICONS[g.icon] || ''}`;
+      el.innerHTML = `
+        <div class="thumb">${thumb}<span class="badge ${ready ? 'play' : 'soon'}">${ready ? 'PLAY NOW' : 'COMING SOON'}</span></div>
+        <div class="body">
+          <h2 class="title">${g.title}</h2>
+          <p class="desc">${g.desc}</p>
+          <div class="tags">${[g.genre, ...g.tags.filter((t) => t !== g.genre)].map((t) => `<span class="tag">${t}</span>`).join('')}</div>
+          <span class="cta">${ready ? '▶ PLAY' : 'COMING SOON'}</span>
+        </div>`;
+      return el;
+    }
+
+    function render() {
+      const genres = ['All', ...new Set(GAMES.map((g) => g.genre))];
+      if (!genres.includes(current)) current = 'All';
+      filters.innerHTML = '';
+      for (const gname of genres) {
+        const b = document.createElement('button');
+        b.className = 'chip' + (gname === current ? ' on' : '');
+        b.textContent = gname;
+        b.onclick = () => { current = gname; try { localStorage.setItem('games-filter', gname); } catch (_) { /* ignore */ } render(); };
+        filters.appendChild(b);
+      }
+      grid.innerHTML = '';
+      const list = GAMES.filter((g) => current === 'All' || g.genre === current)
+        .sort((a, b) => (a.status === b.status ? 0 : a.status === 'ready' ? -1 : 1));
+      if (!list.length) grid.innerHTML = '<p class="empty">No games here yet.</p>';
+      for (const g of list) grid.appendChild(card(g));
+    }
+    render();
+  </script>
+</body>
+</html>

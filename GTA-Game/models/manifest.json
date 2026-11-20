@@ -1,0 +1,8 @@
+{
+  "player": "player.glb",
+  "peds": ["ped1.glb", "ped2.glb", "ped3.glb", "ped4.glb", "ped5.glb"],
+  "thug": "thug.glb",
+  "heights": { "player.glb": 1.78, "ped1.glb": 1.72, "ped2.glb": 1.75, "ped3.glb": 1.73, "ped4.glb": 1.6, "ped5.glb": 1.62, "thug.glb": 1.8 },
+  "tint": { "player.glb": "#c99a76", "ped1.glb": "#c09272", "ped4.glb": "#cfa27f" },
+  "animations": {}
+}
