@@ -125,10 +125,19 @@ export class Person {
     this.swing.rotation.set(0.25, 0, 0);
     this.h.rArm.rotation.set(-0.15, 0, 0.12); this.h.rElbow.rotation.x = -0.35;
   }
-  setSwing(a, dirAngle) {
+  // umpire's signals: 'four' (arm waves across), 'six' (both arms up), 'out' (finger raised), 'wide' (arms out)
+  signal(kind, t) {
+    const h = this.h;
+    animateHuman(h, 0, 0);
+    if (kind === 'six') { h.lArm.rotation.set(-3.0, 0, -0.1); h.rArm.rotation.set(-3.0, 0, 0.1); h.lElbow.rotation.x = h.rElbow.rotation.x = 0; }
+    else if (kind === 'out') { h.rArm.rotation.set(-2.9, 0, 0.05); h.rElbow.rotation.x = -0.15; }
+    else if (kind === 'wide') { h.lArm.rotation.set(0, 0, -1.5); h.rArm.rotation.set(0, 0, 1.5); }
+    else if (kind === 'four') { h.rArm.rotation.set(-1.55, 0, 0.6 + Math.sin(t * 7) * 0.7); h.rElbow.rotation.x = 0; }
+  }
+  setSwing(a, dirAngle, tilt = 0) {
     if (this.swing) this.swing.position.set(0, 0.98, 0.18);
     if (!this.swing) return;
-    this.swing.rotation.set(a, dirAngle - this.root.rotation.y, 0, 'YXZ'); // dirAngle is a world heading
+    this.swing.rotation.set(a, dirAngle - this.root.rotation.y, tilt, 'YXZ'); // dirAngle is a world heading; tilt flattens the bat for pulls and cuts
     // arms follow the bat: up behind for the back-lift, through and over for the follow-through
     const h = this.h, up = Math.max(0, -a), thru = Math.max(0, a);
     const ax = -0.75 - up * 0.55 - thru * 0.75;

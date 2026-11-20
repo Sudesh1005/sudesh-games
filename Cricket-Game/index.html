@@ -24,9 +24,13 @@
     <div id="score">
       <div class="sc-top"><i id="sc-dot"></i><b id="sc-team">You</b><span id="sc-score">0/0</span><small id="sc-overs">(0.0/2)</small></div>
       <div id="sc-line"></div>
+      <div class="sc-row"><span id="sc-bat"></span><span id="sc-bowl"></span></div>
+      <div id="role"></div>
     </div>
+    <div id="speed"></div>
+    <div id="replay">● REPLAY <small>tap to skip</small></div>
+    <div id="comm"></div>
     <div id="over"></div>
-    <div id="role"></div>
     <div id="tools"><button id="sound" aria-label="Sound on or off">🔊</button><button id="quit" aria-label="Quit match">✕</button></div>
     <div id="banner"><div id="ban-t"></div><div id="ban-s"></div></div>
     <div id="toast"></div>
@@ -39,6 +43,7 @@
         <button data-dir="1" aria-label="Off side">◀</button>
         <button data-dir="0" aria-label="Straight">▲</button>
         <button data-dir="-1" aria-label="Leg side">▶</button>
+        <button data-dir="def" class="def">DEFEND</button>
         <button data-dir="null" class="on">AUTO</button>
       </div>
       <button id="b-loft">LOFT</button>
@@ -80,7 +85,7 @@
       <p id="rec"></p>
 
       <div class="help">
-        <b>Batting:</b> <span class="desk">press <kbd>Space</kbd> or click as the ball reaches you. <kbd>←</kbd> <kbd>↑</kbd> <kbd>→</kbd> choose the direction, hold <kbd>Shift</kbd> to hit it in the air.</span><span class="mob">tap HIT as the ball reaches you. Pick a direction and LOFT before the ball arrives.</span><br>
+        <b>Batting:</b> <span class="desk">press <kbd>Space</kbd> or click as the ball reaches you. <kbd>←</kbd> <kbd>↑</kbd> <kbd>→</kbd> choose the direction, <kbd>↓</kbd> defends, hold <kbd>Shift</kbd> to hit it in the air.</span><span class="mob">tap HIT as the ball reaches you. Pick a direction, DEFEND or LOFT before the ball arrives.</span><br>
         <b>Bowling:</b> <span class="desk">move the mouse to pick where the ball pitches, <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> for pace / off spin / leg spin, then click when the needle is in the middle.</span><span class="mob">drag on the pitch to aim, pick the delivery, then tap BOWL when the needle is in the middle.</span>
       </div>
       <div class="links"><a href="../" class="ghost">&larr; All Games</a></div>
@@ -108,7 +113,7 @@
   </div>
 
   <div id="brk" class="overlay hidden">
-    <div class="card"><h2 id="brk-t">INNINGS BREAK</h2><p id="brk-s"></p><button id="brk-go" class="primary">CONTINUE</button></div>
+    <div class="card"><h2 id="brk-t">INNINGS BREAK</h2><p id="brk-s"></p><canvas id="brk-ww" class="ww" width="240" height="240"></canvas><p id="brk-ww-l" class="wwl"></p><button id="brk-go" class="primary">CONTINUE</button></div>
   </div>
 
   <div id="res" class="overlay hidden">
@@ -116,6 +121,7 @@
       <h2 id="res-t">YOU WON!</h2>
       <p id="res-s"></p>
       <table id="res-table"></table>
+      <canvas id="res-ww" class="ww" width="220" height="220"></canvas><p id="res-ww-l" class="wwl"></p>
       <button id="res-again" class="primary">PLAY AGAIN</button>
       <p id="res-wait"></p>
       <button id="res-menu">MENU</button>

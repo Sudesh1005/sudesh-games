@@ -82,6 +82,15 @@ export function buildGround(low) {
   pitch.rotation.x = -Math.PI / 2; pitch.position.set(0, 0.01, CENTER.z);
   group.add(shadows(pitch, false, true));
 
+  // the 30-yard fielding circle, drawn as white dashes
+  const dash = new THREE.MeshBasicMaterial({ color: 0xf4f4f4, transparent: true, opacity: 0.85, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+  for (let k = 0; k < 72; k++) {
+    const a = (k / 72) * Math.PI * 2, R = 30;
+    const d = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 1.3), dash);
+    d.rotation.set(-Math.PI / 2, 0, a + Math.PI / 2); // lying flat, along the circle
+    d.position.set(CENTER.x + Math.sin(a) * R, 0.012, CENTER.z + Math.cos(a) * R);
+    group.add(d);
+  }
   const stumpsBat = makeStumps(0), stumpsBowl = makeStumps(BOWL_Z);
   group.add(stumpsBat, stumpsBowl);
 

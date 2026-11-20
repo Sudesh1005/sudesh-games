@@ -101,18 +101,23 @@ export function resolve(del, shot, seed) {
   const base = { swing: !!shot, timing: null, err: 0 };
   const canReach = del.contact && Math.abs(del.contact.x - BAT_X) < 1.35 && del.contact.y < 1.9;
   const err = shot && del.tc !== null ? shot.at - del.tc : 99;
-  if (!shot || !canReach || Math.abs(err) > WINDOW) {
+  const win = shot && shot.def ? WINDOW * 1.45 : WINDOW;
+  if (!shot || !canReach || Math.abs(err) > win) {
     // left alone or missed: bowled, wide, or the keeper takes it
     const timing = !shot ? 'left' : !canReach ? 'out of reach' : err < 0 ? 'too early' : 'too late';
     if (del.stumpsT !== null) return { ...base, err, timing, kind: 'bowled', outcome: { runs: 0, out: 'bowled', text: 'BOWLED!' }, endT: del.stumpsT + 1.6, ball: null, fielder: null };
     if (del.wide) return { ...base, err, timing, kind: 'wide', outcome: { runs: 1, wide: true, text: 'WIDE' }, endT: Math.min(del.keeperT, 1.4) + 0.8, ball: null, fielder: null };
     return { ...base, err, timing, kind: 'dot', outcome: { runs: 0, text: shot ? 'BEATEN!' : 'LEFT ALONE' }, endT: Math.min(del.keeperT, 1.4) + 0.8, ball: null, fielder: null };
   }
-  const q = 1 - Math.abs(err) / WINDOW; // 1 = perfect
+  const q = 1 - Math.abs(err) / win; // 1 = perfect
   const timing = Math.abs(err) < 0.045 ? 'perfect' : err < 0 ? 'early' : 'late';
   const c = del.contact;
   let phi, speed, elev, edged = false;
-  if (q < 0.28) {
+  if (shot.def && q >= 0.15) {
+    // a solid block: the ball drops at the batter's feet or trickles into the infield
+    phi = clamp((c.x - BAT_X - 0.25) * 0.6 + err * 3 + (r() - 0.5) * 0.6, -1.2, 1.2);
+    speed = 3 + q * 5 + r() * 2; elev = 0.02 + r() * 0.04;
+  } else if (q < (shot.def ? 0.15 : 0.28)) {
     // edged behind
     edged = true;
     phi = (c.x > BAT_X ? 1 : -1) * (2.55 + r() * 0.4);
@@ -179,9 +184,10 @@ export function resolve(del, shot, seed) {
       if (d < bd) { bd = d; best = { t: stopT + react + d / 7.2, idx, role, x, z, y: BALL_R, run: d, fx, fz, airborne: false }; }
     });
   }
-  const out = { ...base, err, timing: edged ? 'edged' : timing, q, kind: 'hit', ball: path, edged, phi };
+  const out = { ...base, err, timing: edged ? 'edged' : timing, q, kind: 'hit', ball: path, edged, phi, def: !!(shot.def && !edged) };
+  out.shotName = shotName(del, out, shot);
   if (boundary && (!best || best.t > flightEnd)) {
-    out.outcome = { runs: boundary, boundary, text: boundary === 6 ? 'SIX!' : 'FOUR!' };
+    out.outcome = { runs: boundary, boundary, text: boundary === 6 ? 'SIX!' : 'FOUR!', land: land(x, z), shot: out.shotName };
     out.endT = flightEnd + 2.4; out.fielder = null;
     out.runAnim = 0;
     return out;
@@ -192,7 +198,7 @@ export function resolve(del, shot, seed) {
     const fast = Math.hypot(path.x[1] - path.x[0], path.z[1] - path.z[0]) / DT > 26 ? 0.15 : 0;
     const p = best.role === 'keeper' || best.role === 'slip' ? 0.75 : 0.88 - hard * 0.4 - fast;
     if (r() < p) {
-      out.outcome = { runs: 0, out: 'caught', by: best.role, text: 'CAUGHT!' };
+      out.outcome = { runs: 0, out: 'caught', by: best.role, text: 'CAUGHT!', land: land(best.x, best.z), shot: out.shotName };
       out.fielder = best; out.catchT = best.t; out.endT = best.t + 2.0; out.ballEnd = best.t; out.runAnim = 0;
       return out;
     }
@@ -211,10 +217,36 @@ export function resolve(del, shot, seed) {
   const dead = best.t + throwT;
   let runs = Math.floor((dead - 0.5) / 2.7);
   runs = clamp(runs, 0, 3);
-  out.outcome = { runs, text: out.dropped ? 'DROPPED!' : out.misfield ? 'MISFIELD! ' + runs : runs === 0 ? 'NO RUN' : runs === 1 ? '1 RUN' : runs + ' RUNS' };
+  out.outcome = { runs, text: out.dropped ? 'DROPPED!' : out.misfield ? 'MISFIELD! ' + runs : runs === 0 ? 'NO RUN' : runs === 1 ? '1 RUN' : runs + ' RUNS', land: land(best.x, best.z), shot: out.shotName, dropped: !!out.dropped, misfield: !!out.misfield, by: best.role };
   out.fielder = best; out.ballEnd = best.t; out.throwT = throwT; out.runAnim = runs;
   out.endT = Math.max(dead, runs * 2.7 + 0.5) + 1.0;
   return out;
+}
+
+const land = (x, z) => ({ x: Math.round(x * 10) / 10, z: Math.round(z * 10) / 10 });
+
+// A cricket name for the shot, from where it went and how the ball was bowled.
+export function shotName(del, res, shot) {
+  if (res.edged) return res.phi > 0 ? 'thick edge' : 'inside edge';
+  if (res.def) return 'solid defence';
+  const len = del.params.len, short = len > 8, full = len < 3.5, spin = del.params.type === 'spin', loft = shot && shot.loft;
+  const a = res.phi;
+  if (a > 1.6) return loft ? 'ramp over the keeper' : 'late cut';
+  if (a > 0.9) return short ? (loft ? 'upper cut' : 'square cut') : loft ? 'lofted over point' : 'steer through point';
+  if (a > 0.3) return short ? 'cut' : loft ? 'lofted cover drive' : 'cover drive';
+  if (a > -0.3) return loft ? (spin ? 'down the track and over the bowler' : 'lofted straight drive') : full ? 'straight drive' : 'punch down the ground';
+  if (a > -0.9) return short ? (loft ? 'pull' : 'pull shot') : spin && loft ? 'slog sweep' : full ? 'flick' : 'on drive';
+  if (a > -1.6) return short ? (loft ? 'hook' : 'pull') : spin ? 'sweep' : 'whip off the pads';
+  return loft ? 'scoop fine' : 'leg glance';
+}
+
+// A short description of the delivery for commentary: "Good length outside off, 141 km/h".
+export function deliveryDesc(del) {
+  const p = del.params, len = p.len, x = del.contact ? del.contact.x : p.line;
+  const L = len < 1.4 ? (Math.abs(x) < 0.25 ? 'Yorker' : 'Full and fast') : len < 3.5 ? 'Pitched up' : len < 7.5 ? 'Good length' : len < 10 ? 'Short of a length' : 'Bouncer';
+  const line = x > 0.55 ? 'wide outside off' : x > 0.2 ? 'outside off' : x < -0.35 ? 'down the leg side' : x < -0.1 ? 'on the pads' : 'on the stumps';
+  const sp = Math.round(p.speed * 3.6 * 10) / 10;
+  return p.type === 'spin' ? `${L === 'Yorker' ? 'Darted in' : L === 'Bouncer' ? 'Dropped short' : L === 'Good length' ? 'Tossed up' : L} ${line}, ${p.turn > 0 ? 'leg spin' : 'off spin'} at ${Math.round(sp)} km/h` : `${L} ${line}, ${sp.toFixed(1)} km/h`;
 }
 
 /* ------------------------------------------------------------------ the computer */
@@ -255,6 +287,7 @@ export function aiShot(del, level, need, seed) {
   const err = gauss(r) * L.batSd * (0.6 + 0.6 * d);
   let aggr = 0.22;
   if (need) { const rate = need.runs / Math.max(1, need.balls); aggr = clamp(0.15 + rate * 0.22, 0.1, 0.85); }
+  if (d >= 1 && r() < 0.55 - aggr * 0.5) return { at: del.tc + gauss(r) * L.batSd * 0.7, dir: null, loft: false, def: true };
   const loft = r() < aggr * (1.1 - d * 0.6);
   const dir = r() < 0.6 ? null : off > 0.5 ? 1 : off < 0 ? -1 : [1, 0, -1][(r() * 3) | 0];
   return { at: del.tc + err, dir, loft };

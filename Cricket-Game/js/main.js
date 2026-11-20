@@ -1,8 +1,8 @@
 // Kaathu Cricket: menu, toss, ball-by-ball flow (vs computer or online), controls, camera, scoreboard.
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { makeDelivery, resolve, aiDelivery, aiShot, pathAt, pathDur, FIELDS, BOWLER_END, BOWL_Z, BAT_X, WINDOW, LEVELS } from './play.js';
-import { newMatch, applyBall, curInn, oversText, ballsLeft } from './match.js';
+import { makeDelivery, resolve, aiDelivery, aiShot, pathAt, pathDur, deliveryDesc, FIELDS, BOWL_Z, BAT_X, WINDOW, LEVELS, CENTER, BOUNDARY } from './play.js';
+import { newMatch, applyBall, curInn, oversText, ballsLeft, batter, bowlerName } from './match.js';
 import { buildGround, animateStumps } from './ground.js';
 import { Person, KITS } from './people.js';
 import { CricketAudio } from './audio.js';
@@ -62,7 +62,19 @@ const marker = new THREE.Group();
 marker.add(new THREE.Mesh(new THREE.RingGeometry(0.32, 0.46, 32).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.95, depthWrite: false, depthTest: false })));
 marker.add(new THREE.Mesh(new THREE.CircleGeometry(0.09, 12).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffd23f, depthTest: false })));
 marker.position.y = 0.03; marker.visible = false; marker.renderOrder = 5; marker.children.forEach((c) => (c.renderOrder = 5));
-scene.add(ballMesh, ballShadow, marker);
+// a faint trail behind the ball, like TV graphics
+const TRAIL = 18, trailPos = new Float32Array(TRAIL * 3), trailGeo = new THREE.BufferGeometry();
+trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
+const trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 }));
+trail.frustumCulled = false; trail.visible = false;
+let trailN = 0;
+function trailPush(x, y, z) {
+  if (trailN < TRAIL) trailN++;
+  trailPos.copyWithin(3, 0, (TRAIL - 1) * 3); trailPos[0] = x; trailPos[1] = y; trailPos[2] = z;
+  for (let i = trailN; i < TRAIL; i++) { trailPos[i * 3] = x; trailPos[i * 3 + 1] = y; trailPos[i * 3 + 2] = z; }
+  trailGeo.attributes.position.needsUpdate = true;
+}
+scene.add(ballMesh, ballShadow, marker, trail);
 
 const audio = new CricketAudio();
 
@@ -70,7 +82,7 @@ const audio = new CricketAudio();
 const G = {
   state: 'menu', online: false, me: 0, names: ['You', 'Computer'], match: null, ball: null, pending: null,
   people: null, fieldType: 'pace', dir: null, loft: false, bowlType: 'pace', aim: { x: 0.1, len: 6 }, meterT: 0,
-  timers: [], camLook: new THREE.Vector3(0, 1, -4), camPos: new THREE.Vector3(0, 4.6, -33), hint: true,
+  timers: [], camLook: new THREE.Vector3(0, 1, -4), camPos: new THREE.Vector3(0, 4.6, -33), hint: true, replay: null, signal: null, cheerT: -9,
 };
 window.__cricket = G;
 let room = null;
@@ -143,8 +155,9 @@ function beginMatch(batFirst) {
 
 function nextBall() {
   if (!G.match || G.match.finished) return;
-  G.ball = null;
+  G.ball = null; trailN = 0; trail.visible = false;
   resetPeople();
+  setDir(null); setLoft(false);
   const over = Math.floor(inn().balls / 6);
   setPanels();
   if (iBowl() && !BOT) {
@@ -200,6 +213,7 @@ function ballEndTime(B) {
 
 function finishBall() {
   const B = G.ball, o = B.res.outcome;
+  G.replay = null; $('replay').classList.remove('show');
   const kind = applyBall(G.match, o);
   G.ball = null;
   updateHUD();
@@ -214,7 +228,8 @@ function hitPressed() {
   if (!humanBats() || G.state !== 'ball' || !G.ball || G.ball.res) return;
   const t = clock - G.ball.t0;
   if (t < -0.25) return; // still in the run-up: ignore
-  decide({ at: t, dir: G.dir, loft: G.loft || keys.has('ShiftLeft') || keys.has('ShiftRight') });
+  const def = G.dir === 'def';
+  decide({ at: t, dir: def ? null : G.dir, loft: !def && (G.loft || keys.has('ShiftLeft') || keys.has('ShiftRight')), def });
 }
 function bowlPressed() {
   if (!humanBowls() || G.state !== 'aim') return;
@@ -240,12 +255,12 @@ addEventListener('keydown', (e) => {
   keys.add(e.code);
   if (e.repeat) return;
   if (e.code === 'KeyM') audio.toggle();
-  if (e.code === 'Space' || e.code === 'Enter') { if (G.state === 'aim') bowlPressed(); else hitPressed(); }
+  if (e.code === 'Space' || e.code === 'Enter') { if (G.replay) endReplay(); else if (G.state === 'aim') bowlPressed(); else hitPressed(); }
   if (humanBats()) {
     if (e.code === 'ArrowLeft' || e.code === 'KeyA') setDir(1);
     if (e.code === 'ArrowRight' || e.code === 'KeyD') setDir(-1);
     if (e.code === 'ArrowUp' || e.code === 'KeyW') setDir(0);
-    if (e.code === 'ArrowDown' || e.code === 'KeyS') setDir(null);
+    if (e.code === 'ArrowDown' || e.code === 'KeyS') setDir(G.dir === 'def' ? null : 'def');
     if (e.code === 'KeyL') setLoft(!G.loft);
   }
   if (G.state === 'aim') {
@@ -266,10 +281,11 @@ function aimFromPointer(e) {
 canvas.addEventListener('pointermove', (e) => { if (G.state === 'aim' && (e.pointerType === 'mouse' || e.buttons)) aimFromPointer(e); });
 canvas.addEventListener('pointerdown', (e) => {
   audio.init();
+  if (G.replay) { endReplay(); return; }
   if (G.state === 'aim') { aimFromPointer(e); if (e.pointerType === 'mouse') bowlPressed(); }
   else hitPressed();
 });
-document.querySelectorAll('[data-dir]').forEach((b) => b.addEventListener('pointerdown', (e) => { e.stopPropagation(); setDir(b.dataset.dir === 'null' ? null : +b.dataset.dir); }));
+document.querySelectorAll('[data-dir]').forEach((b) => b.addEventListener('pointerdown', (e) => { e.stopPropagation(); const v = b.dataset.dir; setDir(v === 'null' ? null : v === 'def' ? 'def' : +v); }));
 $('b-loft').addEventListener('pointerdown', (e) => { e.stopPropagation(); setLoft(!G.loft); });
 $('b-hit').addEventListener('pointerdown', (e) => { e.stopPropagation(); hitPressed(); });
 document.querySelectorAll('[data-bt]').forEach((b) => b.addEventListener('pointerdown', (e) => { e.stopPropagation(); setBowlType(b.dataset.bt); }));
@@ -309,10 +325,10 @@ function ballPos(B, t, out) {
 }
 
 function animate(dt) {
-  const B = G.ball, P = G.people;
+  const B = G.replay ? G.replay.B : G.ball, P = G.people;
   if (!P) return;
   // bowler: run-up, action, follow-through
-  const bt = B ? clock - B.t0 : -9;
+  const bt = G.replay ? G.replay.t : B ? clock - B.t0 : -9;
   const bw = P.bowler;
   if (B && bt < 0.9) {
     const runStart = -1.4, z0 = BOWL_Z - 13, z1 = BOWL_Z - 0.4;
@@ -322,36 +338,49 @@ function animate(dt) {
   } else if (!B) bw.stand();
   // keeper crouches, fielders walk in a step as the bowler runs up
   P.fielders.forEach((f, k) => { if (!(B && B.res && B.res.fielder && B.res.fielder.idx === k && bt > (B.del.tc ?? 0))) { if (B && bt > -0.6 && bt < 1.2) f.crouch(k === 0 ? 1.4 : 0.5); else if (k === 0) f.crouch(1.4); else f.stand(); } });
-  // batter swing
+  // batter: back-lift, footwork (forward to full balls, back to short ones) and the shot
   const bat = P.batter;
-  let swingA = -0.35, swingDir = 0;
-  if (B) {
-    if (bt > -0.4) swingA = -1.2; // back-lift
+  let swingA = -0.35, swingDir = 0, tilt = 0;
+  if (B && !(B.res && B.res.runAnim && bt > (B.del.tc ?? 0) + B.shift + 0.3)) {
+    if (bt > -0.4) swingA = -1.2;
+    const len = B.p.len, tc = B.del.tc ?? 0.6;
     if (B.shot && B.res) {
       const at = B.shot.at + B.shift, k = clamp((bt - (at - 0.16)) / 0.38, 0, 1);
-      if (bt > at - 0.16) swingA = -2.0 + k * 4.0;
-      swingDir = B.res.kind === 'hit' ? -B.res.phi : -(B.shot.dir === 1 ? 0.6 : B.shot.dir === -1 ? -0.7 : 0);
-    }
+      const step = clamp((bt - (at - 0.42)) / 0.22, 0, 1);
+      bat.root.position.z = -0.95 + (len < 5 ? -0.38 : len > 8 ? 0.3 : -0.1) * step;
+      bat.root.position.x = BAT_X + (len < 5 ? 0.12 : 0) * step;
+      if (B.shot.def) { if (bt > at - 0.16) swingA = -1.0 + Math.min(1, k * 1.6) * 1.25; }
+      else if (bt > at - 0.16) swingA = -2.0 + k * 4.0;
+      const phi = B.res.kind === 'hit' ? B.res.phi : B.shot.dir === 1 ? 0.6 : B.shot.dir === -1 ? -0.7 : 0;
+      swingDir = -phi;
+      if (len > 7.5 && Math.abs(phi) > 0.45 && !B.shot.def) tilt = (phi > 0 ? 1 : -1) * 1.1 * Math.sin(k * Math.PI); // horizontal bat: pull / cut
+    } else if (bt > tc - 0.1 && B.res) bat.root.position.z = -0.95; // left alone
   }
-  bat.setSwing(swingA, swingDir);
-  if (!B || !B.res) { /* stance kept */ }
+  bat.setSwing(swingA, swingDir, tilt);
+  // umpire's signal and the crowd jumping after big moments
+  if (G.signal && clock < G.signal.until) P.umpire.signal(G.signal.kind, clock); else if (G.signal) { G.signal = null; P.umpire.stand(); }
+  const ct = clock - G.cheerT;
+  ground.fans.position.y = ct < 2.6 ? Math.abs(Math.sin(ct * 13)) * 0.35 * (1 - ct / 2.6) : 0;
   // ball
   if (B) {
     ballPos(B, bt, tmp);
     ballMesh.position.set(tmp.x, tmp.y, tmp.z); ballMesh.visible = true;
     ballShadow.position.set(tmp.x, 0.015, tmp.z); ballShadow.visible = bt >= 0;
-    events(B, bt, dt);
-  } else { ballMesh.visible = false; ballShadow.visible = false; }
+    trail.visible = bt >= 0; if (bt >= 0) trailPush(tmp.x, tmp.y, tmp.z); else trailN = 0;
+    events(B, bt, dt, !G.replay);
+    if (G.replay) { G.replay.t += dt * G.replay.speed; if (G.replay.t >= G.replay.end) endReplay(); }
+  } else { ballMesh.visible = false; ballShadow.visible = false; trail.visible = false; }
 }
 
 // Sounds, fielder runs, batters running, stumps and banners, in time with the ball.
-function events(B, t, dt) {
-  const P = G.people, del = B.del, r = B.res, ev = B.events, tc = del.tc ?? 0.6;
+function events(B, t, dt, live) {
+  const P = G.people, del = B.del, r = B.res, ev = live ? B.events : (B.revents = B.revents || {}), tc = del.tc ?? 0.6;
+  if (live && !ev.speed && t >= 0) { ev.speed = 1; speedGun(B); }
   if (!ev.bounce && t >= del.bounceAt.t) { ev.bounce = 1; audio.bounce(); }
-  if (!r) { if (humanBats() && t > tc + WINDOW + 0.05) decide(null); return; }
+  if (!r) { if (live && humanBats() && t > tc + WINDOW + 0.05) decide(null); return; }
   if (!ev.timing && (t >= tc + B.shift || r.kind !== 'hit') && B.decidedAt !== null) {
     ev.timing = 1;
-    if (iBat() || !G.online) showTiming(r);
+    if (live && (iBat() || !G.online)) showTiming(r);
     if (r.kind === 'hit') { if (r.edged) audio.edge(); else audio.bat(r.q); }
   }
   const tau = t - tc - B.shift;
@@ -378,20 +407,73 @@ function events(B, t, dt) {
       }
     }
     const evT = r.outcome.boundary ? pathDur(r.ball) : r.outcome.out === 'caught' ? r.catchT : r.ballEnd + (r.throwT || 0) * 0.6;
-    if (!ev.result && tau >= evT) { ev.result = 1; resultMoment(r); }
+    if (live && !ev.result && tau >= evT) { ev.result = 1; resultMoment(r, B); }
   } else {
     if (r.kind === 'bowled' && t >= del.stumpsT + B.shift) {
-      if (!ev.stumps) { ev.stumps = clock; audio.stumps(); }
-      animateStumps(ground.stumpsBat, clock - ev.stumps);
+      if (!ev.stumps) { ev.stumps = 1; audio.stumps(); }
+      animateStumps(ground.stumpsBat, t - del.stumpsT - B.shift);
     }
     const evT = r.kind === 'bowled' ? del.stumpsT + B.shift + 0.15 : tc + B.shift + 0.35;
-    if (!ev.result && t >= evT) { ev.result = 1; resultMoment(r); }
+    if (live && !ev.result && t >= evT) { ev.result = 1; resultMoment(r, B); }
   }
-  if (!ev.done && t >= ballEndTime(B)) { ev.done = 1; finishBall(); }
+  if (live && !ev.done && t >= ballEndTime(B)) { ev.done = 1; if (!startReplay(B)) finishBall(); }
 }
 
-function resultMoment(r) {
+// Slow-motion replay of wickets and sixes from a different camera (tap or Space skips it).
+function startReplay(B) {
+  const r = B.res, o = r.outcome, tc = B.del.tc ?? 0.6;
+  if (!(o.out || o.boundary === 6) || TS > 1.5) return false;
+  let from = -0.35, end, cam, speed = 0.35;
+  if (r.kind === 'bowled') { end = B.del.stumpsT + B.shift + 0.7; cam = 'side'; }
+  else if (r.edged || o.by === 'keeper' || o.by === 'slip') { from = tc - 0.5; end = tc + B.shift + r.catchT + 0.6; cam = 'side'; }
+  else { from = tc - 0.45; end = tc + B.shift + Math.min(o.boundary ? pathDur(r.ball) : r.catchT, 5) + 0.5; cam = 'behind'; speed = 0.5; }
+  G.replay = { B, t: from, end, speed, cam };
+  G.state = 'replay';
+  resetPeople(); trailN = 0;
+  $('replay').classList.add('show');
+  return true;
+}
+function endReplay() {
+  if (!G.replay) return;
+  const B = G.replay.B;
+  G.replay = null; $('replay').classList.remove('show');
+  resetPeople(); animateStumps(ground.stumpsBat, -1);
+  G.ball = B; G.state = 'ball';
+  finishBall();
+}
+
+function speedGun(B) {
+  const p = B.p, e = $('speed');
+  e.innerHTML = `<b>${(p.speed * 3.6).toFixed(1)}</b> km/h <span>${p.type === 'pace' ? 'PACE' : p.turn > 0 ? 'LEG SPIN' : 'OFF SPIN'}</span>`;
+  e.classList.remove('show'); void e.offsetWidth; e.classList.add('show');
+}
+
+// TV-style commentary for the ball that just happened.
+function commentary(r, B) {
+  const o = r.outcome, who = batter(G.match).name, shot = o.shot || r.shotName || 'shot';
+  const cap = (x) => x.charAt(0).toUpperCase() + x.slice(1);
+  let line;
+  if (o.out === 'bowled') line = r.swing ? `${who} plays all round it and the stumps are rattled. BOWLED!` : `${who} leaves it and loses the off stump. BOWLED!`;
+  else if (o.out === 'caught') line = `${cap(shot)}... straight to ${o.by}, and it's taken! ${who} has to go.`;
+  else if (o.boundary === 6) line = `${cap(shot)}, and that's gone all the way. SIX!`;
+  else if (o.boundary === 4) line = `${cap(shot)}, races away to the rope for FOUR.`;
+  else if (o.wide) line = 'Too wide, the umpire stretches his arms. Wide ball.';
+  else if (o.dropped) line = `${cap(shot)}, chance! Put down by ${o.by}.`;
+  else if (o.runs) line = o.misfield ? `${cap(shot)}, misfield in the deep, they take ${o.runs}.` : `${cap(shot)}, ${o.runs === 1 ? 'they take a quick single' : o.runs === 2 ? 'they come back for two' : 'good running, three'}.`;
+  else if (r.kind === 'hit') line = r.def ? 'Solidly defended back down the pitch.' : `${cap(shot)}, straight to the fielder. No run.`;
+  else line = r.swing ? 'Beaten! Past the outside edge.' : 'Left alone, through to the keeper.';
+  const e = $('comm');
+  e.innerHTML = `<span>${esc(deliveryDesc(B.del))}</span> ${esc(line)}`;
+  e.classList.remove('show'); void e.offsetWidth; e.classList.add('show');
+}
+
+function resultMoment(r, B) {
   const o = r.outcome;
+  commentary(r, B);
+  if (o.out) G.signal = { kind: 'out', until: clock + 2.4 };
+  else if (o.boundary) G.signal = { kind: o.boundary === 6 ? 'six' : 'four', until: clock + 2.4 };
+  else if (o.wide) G.signal = { kind: 'wide', until: clock + 1.8 };
+  if (o.out || o.boundary) G.cheerT = clock;
   if (o.out) { banner(o.out === 'bowled' ? 'BOWLED!' : 'CAUGHT!', o.by ? `by ${o.by}` : ''); audio.cheer(0.9, 2.5); if (o.out === 'caught') audio.catchSmack(); }
   else if (o.boundary) { banner(o.text, o.boundary === 6 ? 'Out of the ground!' : 'Races to the rope'); audio.cheer(o.boundary === 6 ? 1 : 0.75, 3); }
   else if (o.wide) banner('WIDE', '+1 run, ball again');
@@ -404,14 +486,17 @@ function resultMoment(r) {
 function updateCamera(dt) {
   const B = G.ball;
   let pos, look, fov;
-  const live = B && B.res && B.res.kind === 'hit' && clock - B.t0 > (B.del.tc ?? 0) + B.shift + 0.25 && !B.res.edged;
-  if (G.state === 'aim') { pos = [0, 6.5, -31]; look = [0, 0, -5.5]; fov = 28; }
+  const live = !G.replay && B && B.res && B.res.kind === 'hit' && clock - B.t0 > (B.del.tc ?? 0) + B.shift + 0.25 && !B.res.edged && !B.res.def;
+  const rp = G.replay;
+  if (rp && rp.cam === 'side') { pos = [9, 1.4, -2.5]; look = [0, 0.6, -1.5]; fov = 30; }
+  else if (rp) { pos = [1.5, 3.2, 7]; look = [ballMesh.position.x, ballMesh.position.y, ballMesh.position.z]; fov = 40; }
+  else if (G.state === 'aim') { pos = [0, 6.5, -31]; look = [0, 0, -5.5]; fov = 28; }
   else if (live) {
     pos = [ballMesh.position.x * 0.25, 30, -78]; look = [ballMesh.position.x, ballMesh.position.y * 0.5, ballMesh.position.z]; fov = 34;
   } else if (G.state === 'menu') {
     const a = clock * 0.05; pos = [Math.sin(a) * 70, 22, -10 + Math.cos(a) * 70]; look = [0, 0, -10]; fov = 40;
   } else { pos = [0, 5.2, -34]; look = [0, 0.95, -1.6]; fov = 17; } // TV broadcast view from behind the bowler, zoomed on the batter
-  const k = 1 - Math.exp(-dt * (live ? 4 : 3));
+  const k = G.replay ? 1 - Math.exp(-dt * 12) : 1 - Math.exp(-dt * (live ? 4 : 3));
   G.camPos.lerp(tmpV.set(...pos), k); G.camLook.lerp(tmpV.set(...look), live ? 1 - Math.exp(-dt * 8) : k);
   camera.position.copy(G.camPos); camera.lookAt(G.camLook);
   camera.fov += (fov - camera.fov) * k; camera.updateProjectionMatrix();
@@ -431,9 +516,16 @@ function updateHUD() {
   $('sc-dot').style.background = '#' + KITS[I.bat].shirt.toString(16).padStart(6, '0');
   $('sc-score').textContent = `${I.runs}/${I.wkts}`;
   $('sc-overs').textContent = `(${oversText(I.balls)}/${m.cfg.overs})`;
-  $('sc-line').textContent = m.cur === 1 && !m.finished
-    ? `Need ${Math.max(0, m.target - I.runs)} from ${ballsLeft(m)} ball${ballsLeft(m) === 1 ? '' : 's'}`
-    : `1st innings · ${names[I.bowl]} bowling`;
+  const crr = I.balls ? (I.runs / I.balls) * 6 : 0;
+  if (m.cur === 1 && !m.finished) {
+    const need = Math.max(0, m.target - I.runs), left = ballsLeft(m);
+    $('sc-line').textContent = `Need ${need} from ${left} ball${left === 1 ? '' : 's'} · RRR ${left ? ((need / left) * 6).toFixed(2) : '-'}`;
+  } else $('sc-line').textContent = `1st innings · CRR ${crr.toFixed(2)}`;
+  if (!m.finished) {
+    const b = batter(m), bw = I.bowling;
+    $('sc-bat').innerHTML = `<b>${esc(b.name)}*</b> ${b.runs} <small>(${b.balls})</small>`;
+    $('sc-bowl').innerHTML = `<b>${esc(bowlerName(m))}</b> ${bw.wkts}-${bw.runs} <small>(${oversText(bw.balls)})</small>`;
+  }
   $('over').innerHTML = I.over.map((x) => `<i class="b${x === 'W' ? ' w' : x === '4' || x === '6' ? ' four' : x === 'Wd' ? ' wd' : ''}">${x}</i>`).join('');
   $('role').textContent = G.online ? (iBat() ? 'YOU ARE BATTING' : 'YOU ARE BOWLING') : iBat() ? 'YOU ARE BATTING' : 'YOU ARE BOWLING';
 }
@@ -454,12 +546,33 @@ function showTiming(r) {
 
 /* ------------------------------------------------------------------ overlays */
 function hideOverlays() { for (const id of ['toss', 'brk', 'res']) $(id).classList.add('hidden'); }
+function wagonWheel(canvas, I) {
+  const g = canvas.getContext('2d'), W = canvas.width, H = canvas.height, R = W * 0.46, s = R / BOUNDARY;
+  const cx = W / 2, cy = H / 2;
+  g.clearRect(0, 0, W, H);
+  g.fillStyle = '#3f8a32'; g.beginPath(); g.arc(cx, cy, R, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = 'rgba(255,255,255,0.7)'; g.lineWidth = 2; g.stroke();
+  g.setLineDash([4, 4]); g.beginPath(); g.arc(cx, cy, 30 * s, 0, Math.PI * 2); g.stroke(); g.setLineDash([]);
+  g.fillStyle = '#d9c38f'; g.fillRect(cx - 1.6 * s, cy - 11 * s, 3.2 * s, 22 * s);
+  const bx = cx, by = cy + (0 - CENTER.z) * s;
+  for (const sh of I.shots) {
+    const x = cx - sh.x * s, y = cy + (sh.z - CENTER.z) * s;
+    g.strokeStyle = sh.out ? '#ff4a5a' : sh.runs === 6 ? '#ffd23f' : sh.runs === 4 ? '#4dd2ff' : sh.runs > 0 ? '#ffffff' : 'rgba(255,255,255,0.35)';
+    g.lineWidth = sh.runs >= 4 ? 3 : 2;
+    g.beginPath(); g.moveTo(bx, by); g.lineTo(x, y); g.stroke();
+  }
+  g.fillStyle = '#fff'; g.font = '600 11px Rubik, sans-serif'; g.textAlign = 'center';
+  g.fillText('BOWLER END', cx, cy - R + 14);
+}
+
 function showBreak() {
   const m = G.match, a = m.innings[0];
   G.state = 'break';
   setPanels();
   $('brk-t').textContent = 'INNINGS BREAK';
   $('brk-s').innerHTML = `<b>${esc(G.names[a.bat])}</b> scored <b>${a.runs}/${a.wkts}</b> (${oversText(a.balls)} ov)<br><b>${esc(G.names[a.bowl])}</b> needs <b>${m.target}</b> to win from ${m.cfg.overs * 6} balls`;
+  $('brk-ww-l').textContent = `${G.names[a.bat]}'s shots`;
+  wagonWheel($('brk-ww'), a);
   $('brk').classList.remove('hidden');
   buildPeople(m.innings[1].bat);
   let left = 5;
@@ -479,6 +592,9 @@ function showResult() {
   }
   $('res-t').textContent = tied ? 'MATCH TIED' : won ? 'YOU WON!' : 'YOU LOST';
   $('res-s').textContent = R.text + (R.margin ? ' · ' + R.margin : '');
+  const mine = m.innings.find((i) => i.bat === G.me) || m.innings[0];
+  $('res-ww-l').textContent = `${G.names[mine.bat]}'s shots · top scorer ${[...m.innings[0].batters, ...m.innings[1].batters].sort((x, y) => y.runs - x.runs)[0].name} ${[...m.innings[0].batters, ...m.innings[1].batters].sort((x, y) => y.runs - x.runs)[0].runs}`;
+  wagonWheel($('res-ww'), mine);
   $('res-table').innerHTML = '<tr><th>Team</th><th>Score</th><th>Overs</th><th>4s</th><th>6s</th></tr>' + m.innings.map((i) =>
     `<tr class="${i.bat === R.winner ? 'win' : ''}"><td><i class="dot" style="background:#${KITS[i.bat].shirt.toString(16).padStart(6, '0')}"></i>${esc(G.names[i.bat])}</td><td><b>${i.runs}/${i.wkts}</b></td><td>${oversText(i.balls)}</td><td>${i.fours}</td><td>${i.sixes}</td></tr>`).join('');
   $('res-again').classList.toggle('hidden', G.online && !room?.isHost);

@@ -7,6 +7,15 @@ A short 3D cricket match in the browser, shown from a TV-broadcast camera behind
 - **vs Computer**: when you bat, the computer bowls; when you bowl, the computer bats. Easy / Normal / Hard.
 - **Online with a friend (2 players)**: one player presses **CREATE ONLINE MATCH** and gets a 6-letter code (or an invite link). The friend types their name and the code and presses **JOIN**. One bats while the other bowls, then they swap.
 
+## Broadcast-style touches
+
+- TV scorecard: score, overs, current batter's runs (balls), bowler's figures, run rates and the target
+- Speed gun after every delivery, and a commentary line describing the ball and the shot ("Good length outside off, 141.2 km/h — Cover drive, races away to the rope for FOUR.")
+- Different shots: front-foot drives, back-foot pulls and cuts with a horizontal bat, glances, sweeps, and a defensive block; the batter steps forward to full balls and back to short ones
+- Umpire signals for four, six, out and wide; the crowd jumps for boundaries and wickets
+- Slow-motion replays from a side-on or behind-the-batter camera for wickets and sixes (tap or Space to skip)
+- Ball trail, 30-yard fielding circle, and a wagon wheel of the shots at the innings break and the end of the match
+
 ## Match settings (chosen by whoever creates the match)
 
 - **Overs**: 1, 2, 3 or 5 per innings
@@ -19,7 +28,7 @@ The first innings sets the target; the second team chases it. Most runs wins (or
 
 **Batting**: press **Space** or click (tap **HIT** on phones) as the ball reaches you.
 - Timing decides everything: perfect timing hits it hard, a little early pulls it to the leg side, a little late sends it to the off side, badly mistimed edges it or misses.
-- **← ↑ →** (or the ◀ ▲ ▶ buttons) choose the direction, **↓** / AUTO plays with the line of the ball.
+- **← ↑ →** (or the ◀ ▲ ▶ buttons) choose the direction, **↓** (or DEFEND) blocks the ball safely, AUTO plays with the line of the ball. The choice resets every ball.
 - Hold **Shift** (or switch on **LOFT**) to hit it in the air: sixes, but also catches.
 - If you miss and the ball hits the stumps, you're bowled.
 
