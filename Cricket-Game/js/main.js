@@ -102,7 +102,7 @@ function resetPeople() {
   const P = G.people;
   if (!P) return;
   P.batter.root.position.set(BAT_X, 0, -0.95); P.batter.root.rotation.y = Math.PI / 2; P.batter.batStance();
-  P.runner.root.position.set(2.3, 0, BOWL_Z + 1.3); P.runner.root.rotation.y = 0; P.runner.stand(); P.runner.setSwing(0.3, 0);
+  P.runner.root.position.set(2.3, 0, BOWL_Z + 1.3); P.runner.root.rotation.y = 0; P.runner.holdBat();
   P.umpire.root.position.set(-2.1, 0, BOWL_Z - 1.2); P.umpire.root.rotation.y = 0; P.umpire.stand();
   P.bowler.root.position.set(-0.7, 0, BOWL_Z - 13); P.bowler.root.rotation.y = 0; P.bowler.stand();
   const set = FIELDS[G.fieldType];
