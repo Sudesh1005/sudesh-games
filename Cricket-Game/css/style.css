@@ -167,3 +167,5 @@ h3 { font: 12px var(--display); letter-spacing: 2px; color: var(--muted); margin
 @media (max-height: 480px) and (orientation: landscape) { #comm { bottom: 92px; font-size: 11px; padding: 5px 9px; } #speed { top: 10px; } }
 
 #role { position: static; transform: none; display: inline-block; margin-top: 6px; }
+
+#mload { margin: 0; font-size: 12px; color: var(--muted); text-align: center; min-height: 1em; }

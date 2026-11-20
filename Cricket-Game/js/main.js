@@ -5,6 +5,7 @@ import { makeDelivery, resolve, aiDelivery, aiShot, pathAt, pathDur, deliveryDes
 import { newMatch, applyBall, curInn, oversText, ballsLeft, batter, bowlerName } from './match.js';
 import { buildGround, animateStumps } from './ground.js';
 import { Person, KITS } from './people.js';
+import { loadCricketers } from './models.js';
 import { CricketAudio } from './audio.js';
 import { Room, cleanCode, cleanName } from './net.js';
 
@@ -156,6 +157,7 @@ function beginMatch(batFirst) {
 function nextBall() {
   if (!G.match || G.match.finished) return;
   G.ball = null; trailN = 0; trail.visible = false;
+  if (G.rebuild) { G.rebuild = false; buildPeople(inn().bat); } // the realistic players finished loading
   resetPeople();
   setDir(null); setLoft(false);
   const over = Math.floor(inn().balls / 6);
@@ -487,8 +489,10 @@ function updateCamera(dt) {
   const B = G.ball;
   let pos, look, fov;
   const live = !G.replay && B && B.res && B.res.kind === 'hit' && clock - B.t0 > (B.del.tc ?? 0) + B.shift + 0.25 && !B.res.edged && !B.res.def;
-  const rp = G.replay;
-  if (rp && rp.cam === 'side') { pos = [9, 1.4, -2.5]; look = [0, 0.6, -1.5]; fov = 30; }
+  const rp = G.replay, dbg = params.get('cam');
+  if (dbg === 'bat') { pos = [3.2, 1.4, -0.2]; look = [BAT_X, 1.0, -0.95]; fov = 40; }
+  else if (dbg === 'front') { pos = [BAT_X, 1.5, -5]; look = [BAT_X, 1.0, -0.95]; fov = 40; }
+  else if (rp && rp.cam === 'side') { pos = [9, 1.4, -2.5]; look = [0, 0.6, -1.5]; fov = 30; }
   else if (rp) { pos = [1.5, 3.2, 7]; look = [ballMesh.position.x, ballMesh.position.y, ballMesh.position.z]; fov = 40; }
   else if (G.state === 'aim') { pos = [0, 6.5, -31]; look = [0, 0, -5.5]; fov = 28; }
   else if (live) {
@@ -807,6 +811,18 @@ function frame() {
 
 toMenu();
 $('loading').classList.add('hidden');
+// realistic players: the same character models as the Kadal Nagaram city game (built-in people until they load)
+if (!params.has('simple')) {
+  const files = ['player.glb', 'ped1.glb', 'ped2.glb', 'ped3.glb', 'thug.glb'];
+  const heights = { 'player.glb': 1.78, 'ped1.glb': 1.72, 'ped2.glb': 1.75, 'ped3.glb': 1.73, 'thug.glb': 1.8 };
+  loadCricketers('../GTA-Game/models/', files, heights, (i, n) => { $('mload').textContent = `Loading players ${i}/${n}…`; })
+    .then((lib) => {
+      $('mload').textContent = '';
+      G.modelsReady = !!lib;
+      if (lib && G.people) { if (G.state === 'aim' || G.state === 'wait' || G.state === 'break') { buildPeople(inn().bat); } else G.rebuild = true; }
+    })
+    .catch(() => { $('mload').textContent = ''; });
+}
 if (params.has('room')) { $('m-code').value = cleanCode(params.get('room')); lbStatus('Type your name and press JOIN to play.'); }
 if (params.has('auto')) startSingle();
 // testing aid: ?mp=host&name=A creates a match and starts it when a friend joins; ?mp=join&room=CODE&name=B joins
