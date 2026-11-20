@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>Kaathu Riders</title>
+  <meta name="description" content="3D motorbike racing through city, highway and mountain traffic, right in the browser.">
+  <meta name="theme-color" content="#0d0b1e">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bungee&family=Rubik:wght@400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <script type="importmap">
+    { "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    } }
+  </script>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="hud" class="hidden">
+    <div id="hud-tl">
+      <div class="box" id="posbox"><div class="lbl">POS</div><div class="big-n"><span id="h-pos">1</span><sup id="h-posx">st</sup><small id="h-of">/6</small></div></div>
+      <div class="box"><div class="lbl">TO FINISH</div><div class="big-n mid" id="h-dist">0 m</div></div>
+    </div>
+    <ol id="board"></ol>
+    <div id="strip"><span class="flag">▶</span><div id="strip-bar"><div id="strip-dots"></div></div><span class="flag">🏁</span></div>
+    <div id="hud-tr">
+      <div class="box" id="times">
+        <div class="row"><span class="lbl">TIME</span><span id="h-time">0:00.000</span></div>
+        <div class="row"><span class="lbl">BEST</span><span id="h-best">--:--.---</span></div>
+        <div class="row"><span class="lbl">NEAR MISS</span><span id="h-nm">0</span></div>
+      </div>
+      <div id="hud-tc">
+        <button id="pauseBtn" aria-label="Pause">II</button>
+        <button id="camBtn" aria-label="Change camera">CAM</button>
+        <button id="resetBtn" aria-label="Reset bike to the road">⟲</button>
+      </div>
+    </div>
+    <div id="speedo">
+      <div id="h-spd">0</div><div class="unit">KM/H</div>
+      <div class="nbar"><div id="h-nitro"></div></div><div class="nlbl">NITRO</div>
+    </div>
+    <div id="msg"></div>
+    <div id="combo"></div>
+    <div id="big"></div>
+  </div>
+
+  <div id="touch">
+    <div class="tl">
+      <button data-t="left" aria-label="Lean left">◀</button>
+      <button data-t="right" aria-label="Lean right">▶</button>
+    </div>
+    <div class="tr">
+      <button data-t="nitro" class="nos">NOS</button>
+      <button data-t="gas" class="gas">GAS</button>
+      <button data-t="brake" class="brake">BRAKE</button>
+    </div>
+  </div>
+
+  <div id="menu" class="hidden">
+    <div class="panel">
+      <div class="logo"><span class="l1">KAATHU</span><span class="l2">RIDERS</span></div>
+      <p class="tag">Bike racing through real traffic. Weave past cars, autos, buses and trucks, and don't hit them. Close passes fill your nitro.</p>
+
+      <h3>Route</h3>
+      <div id="m-routes" class="tracks"></div>
+
+      <h3>Bike</h3>
+      <div id="m-bikes" class="cars"></div>
+      <div id="m-paints" class="paints"></div>
+
+      <h3>Race</h3>
+      <div class="opts">
+        <label>Mode</label>
+        <div class="seg" id="o-mode"><button data-v="race">Race</button><button data-v="tt">Time Trial</button></div>
+        <label>Traffic</label>
+        <div class="seg" id="o-traffic"><button data-v="light">Light</button><button data-v="normal">Normal</button><button data-v="heavy">Heavy</button></div>
+        <label>Rivals</label>
+        <div class="seg" id="o-diff"><button data-v="easy">Easy</button><button data-v="normal">Normal</button><button data-v="hard">Hard</button></div>
+      </div>
+
+      <button id="start">START RACE</button>
+
+      <div class="controls desk">
+        <div><kbd>W</kbd> <kbd>↑</kbd><span>Throttle</span></div>
+        <div><kbd>S</kbd> <kbd>↓</kbd><span>Brake</span></div>
+        <div><kbd>A D</kbd> <kbd>← →</kbd><span>Lean and steer</span></div>
+        <div><kbd>Shift</kbd> <kbd>N</kbd><span>Nitro (wheelie!)</span></div>
+        <div><kbd>H</kbd><span>Horn</span></div>
+        <div><kbd>C</kbd><span>Change camera</span></div>
+        <div><kbd>R</kbd><span>Reset to the road</span></div>
+        <div><kbd>M</kbd><span>Sound on / off</span></div>
+        <div><kbd>Esc</kbd> <kbd>P</kbd><span>Pause</span></div>
+      </div>
+      <p class="controls mob">Lean with ◀ ▶, hold GAS to ride, BRAKE to slow down and NOS for a boost. Pass close to traffic to refill nitro.</p>
+      <div class="links"><a href="../" class="ghost">&larr; All Games</a></div>
+    </div>
+  </div>
+
+  <div id="pause" class="overlay hidden">
+    <div class="card">
+      <h2>PAUSED</h2>
+      <button id="p-resume" class="primary">RESUME</button>
+      <button id="p-restart">RESTART RACE</button>
+      <button id="p-sound">SOUND: ON</button>
+      <button id="p-menu">QUIT TO MENU</button>
+    </div>
+  </div>
+
+  <div id="results" class="overlay hidden">
+    <div class="card wide">
+      <h2 id="r-title">RESULTS</h2>
+      <p id="r-sub"></p>
+      <table id="r-table"></table>
+      <div class="btns">
+        <button id="r-again" class="primary">RIDE AGAIN</button>
+        <button id="r-next">NEXT ROUTE</button>
+        <button id="r-menu">MENU</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="loading"><div class="spinner"></div><div>Loading route…</div></div>
+  <div id="err"></div>
+
+  <script>
+    window.addEventListener('error', function (e) {
+      var el = document.getElementById('err');
+      el.style.display = 'block';
+      el.textContent += 'Error: ' + (e.message || e) + (e.filename ? ' (' + e.filename.split('/').pop() + ':' + e.lineno + ')' : '') + '\n';
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+      var el = document.getElementById('err');
+      el.style.display = 'block';
+      el.textContent += 'Error: ' + (e.reason && e.reason.message || e.reason) + '\n';
+    });
+    if (location.protocol === 'file:') {
+      document.getElementById('loading').innerHTML = '<div class="fileWarn">This page was opened as a file, and browsers block games loaded that way.<br>' +
+        'Double-click <b>play.bat</b> in the Games folder, or open it from GitHub Pages.</div>';
+    }
+  </script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
