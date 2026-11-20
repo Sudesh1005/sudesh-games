@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>Target Shooter</title>
+  <meta name="description" content="First-person shooting range and drone survival waves, right in the browser.">
+  <meta name="theme-color" content="#0d0b1e">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bungee&family=Rubik:wght@400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <script type="importmap">
+    { "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    } }
+  </script>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="hud" class="hidden">
+    <div id="hurt"></div>
+    <div id="dir"></div>
+    <div id="cross"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><b></b></div>
+    <div id="hitm"><i></i><i></i><i></i><i></i></div>
+    <div id="pops"></div>
+    <div id="tl" class="box">
+      <div class="lbl" id="h-biglbl">TIME</div><div class="big-n" id="h-big">60s</div>
+    </div>
+    <div id="tr" class="box">
+      <div class="lbl">SCORE</div><div class="big-n" id="h-score">0</div>
+    </div>
+    <div id="h-combo"></div>
+    <div id="hpwrap"><div class="lbl">HEALTH</div><div class="hpbar"><div id="hp"></div></div></div>
+    <div id="ammo">
+      <div id="slots"><span>1</span><span>2</span><span>3</span></div>
+      <div class="lbl" id="h-wname">P-9 Pistol</div>
+      <div><span id="h-ammo">12</span><small> / <span id="h-res">∞</span></small></div>
+    </div>
+    <div id="h-reload">RELOADING</div>
+    <div id="banner"><div id="ban-t"></div><div id="ban-s"></div></div>
+    <button id="pauseBtn" aria-label="Pause">II</button>
+  </div>
+
+  <div id="touch">
+    <div id="joy"><div id="knob"></div></div>
+    <div id="tbtns">
+      <button data-k="fire" class="fire">FIRE</button>
+      <button data-k="aim" class="aim">AIM</button>
+      <button data-k="KeyR" class="rel">RELOAD</button>
+      <button data-k="Swap" class="swp">SWAP</button>
+      <button data-k="jump" class="jmp">JUMP</button>
+    </div>
+  </div>
+
+  <div id="menu" class="hidden">
+    <div class="panel">
+      <div class="logo"><span class="l1">TARGET</span><span class="l2">SHOOTER</span></div>
+      <p class="tag">Sharpen your aim on the range, then hold the arena against waves of attack drones.</p>
+      <h3>Mode</h3>
+      <div class="modes">
+        <button class="mcard" data-m="range"><b>Target Range</b><span>60 seconds of pop-up and moving targets from 10 to 50 m. Bullseyes and combos score big; red X boards cost points.</span><i id="best-range"></i></button>
+        <button class="mcard" data-m="waves"><b>Drone Waves</b><span>Survive endless waves of scout, kamikaze and heavy drones. Use cover, grab health and ammo between waves.</span><i id="best-waves"></i></button>
+      </div>
+      <h3>Options</h3>
+      <div class="opts">
+        <label id="diffrow-l">Drones</label>
+        <div class="seg" id="o-diff"><button data-v="easy">Easy</button><button data-v="normal">Normal</button><button data-v="hard">Hard</button></div>
+        <label>Look speed</label>
+        <div class="slider"><input id="sens" type="range" min="0.2" max="3" step="0.1"><span id="sensv">1.0</span></div>
+      </div>
+      <button id="play">PLAY</button>
+      <div class="controls desk">
+        <div><kbd>Mouse</kbd><span>Aim (click PLAY to lock the mouse)</span></div>
+        <div><kbd>Left click</kbd><span>Shoot</span></div>
+        <div><kbd>Right click</kbd><span>Aim down sights</span></div>
+        <div><kbd>W A S D</kbd><span>Move</span></div>
+        <div><kbd>Shift</kbd><span>Sprint</span></div>
+        <div><kbd>Space</kbd><span>Jump</span></div>
+        <div><kbd>R</kbd><span>Reload</span></div>
+        <div><kbd>1 2 3</kbd> <kbd>Wheel</kbd> <kbd>Q</kbd><span>Switch weapon</span></div>
+        <div><kbd>M</kbd><span>Sound on / off</span></div>
+        <div><kbd>Esc</kbd> <kbd>P</kbd><span>Pause</span></div>
+      </div>
+      <p class="controls mob">Move with the left stick and drag on the right side to aim. Hold FIRE to shoot (you can drag it to aim while firing), AIM to zoom, SWAP to change weapon.</p>
+      <div class="links"><a href="../" class="ghost">&larr; All Games</a></div>
+    </div>
+  </div>
+
+  <div id="pause" class="overlay hidden">
+    <div class="card">
+      <h2>PAUSED</h2>
+      <button id="p-resume" class="primary">RESUME</button>
+      <button id="p-restart">RESTART</button>
+      <button id="p-sound">SOUND: ON</button>
+      <button id="p-menu">QUIT TO MENU</button>
+    </div>
+  </div>
+
+  <div id="over" class="overlay hidden">
+    <div class="card">
+      <h2 id="o-title">TIME UP</h2>
+      <p id="o-sub"></p>
+      <table id="o-table"></table>
+      <button id="o-again" class="primary">PLAY AGAIN</button>
+      <button id="o-menu">MENU</button>
+    </div>
+  </div>
+
+  <div id="loading"><div class="spinner"></div><div>Loading…</div></div>
+  <div id="err"></div>
+
+  <script>
+    window.addEventListener('error', function (e) {
+      var el = document.getElementById('err');
+      el.style.display = 'block';
+      el.textContent += 'Error: ' + (e.message || e) + (e.filename ? ' (' + e.filename.split('/').pop() + ':' + e.lineno + ')' : '') + '\n';
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+      var el = document.getElementById('err');
+      el.style.display = 'block';
+      el.textContent += 'Error: ' + (e.reason && e.reason.message || e.reason) + '\n';
+    });
+    if (location.protocol === 'file:') {
+      document.getElementById('loading').innerHTML = '<div class="fileWarn">This page was opened as a file, and browsers block games loaded that way.<br>' +
+        'Double-click <b>play.bat</b> in the Games folder, or open it from GitHub Pages.</div>';
+    }
+  </script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
