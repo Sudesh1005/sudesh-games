@@ -350,9 +350,15 @@ function drawAim(a, dim) {
     for (let s = 0.012; s < L && m < B.dots2.length; s += 0.012) { const d = B.dots2[m++]; d.visible = true; d.position.x = hitCoin.x + cx * s; d.position.z = hitCoin.z + cz * s; }
   } else B.ghost.visible = false;
   for (let i = m; i < B.dots2.length; i++) B.dots2[i].visible = false;
+  // direction arrow out of the striker: longer and redder the harder the shot
+  const pw = a.power;
+  B.arrow.position.x = st.x + a.dx * (P.STRIKER_R + 0.006); B.arrow.position.z = st.z + a.dz * (P.STRIKER_R + 0.006);
+  B.arrow.rotation.y = Math.atan2(-a.dx, -a.dz);
+  B.setArrow(0.035 + pw * 0.15, 0.013);
+  B.arrowMat.color.setHSL(0.33 - pw * 0.33, 1, 0.5);
+  B.arrowMat.opacity = dim ? 0.6 : 0.95;
   // power ring around the striker
   B.power.position.x = st.x; B.power.position.z = st.z;
-  const pw = a.power;
   B.power.scale.setScalar(1 + pw * 0.9);
   B.power.material.color.setHSL(0.33 - pw * 0.33, 0.85, 0.55);
   B.power.material.opacity = dim ? 0.45 : 0.9;

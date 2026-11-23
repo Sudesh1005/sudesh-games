@@ -237,7 +237,7 @@ export function buildBoard(renderer, low) {
   floor.position.y = -0.64; floor.receiveShadow = true; group.add(floor);
 
   // aim guide (dots), pull line and ghost striker ring, all drawn on top of the board
-  const dotGeo = new THREE.CircleGeometry(0.0028, 10).rotateX(-Math.PI / 2);
+  const dotGeo = new THREE.CircleGeometry(0.0036, 12).rotateX(-Math.PI / 2);
   const dotMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthWrite: false });
   const dotMat2 = new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.9, depthWrite: false });
   const aim = new THREE.Group(); aim.visible = false; group.add(aim);
@@ -249,8 +249,27 @@ export function buildBoard(renderer, low) {
   const power = new THREE.Mesh(new THREE.RingGeometry(STRIKER_R + 0.004, STRIKER_R + 0.009, 48, 1, 0, Math.PI * 2).rotateX(-Math.PI / 2),
     new THREE.MeshBasicMaterial({ color: 0x4dd27a, transparent: true, opacity: 0.85, depthWrite: false }));
   power.position.y = 0.0009; aim.add(power);
+  // direction arrow from the striker: a shaft that grows with the pull and a head, pointing along -z
+  const arrowMat = new THREE.MeshBasicMaterial({ color: 0x4dd27a, transparent: true, opacity: 0.92, depthWrite: false });
+  const arrowEdge = new THREE.MeshBasicMaterial({ color: 0x1a120c, transparent: true, opacity: 0.55, depthWrite: false });
+  const arrow = new THREE.Group(); arrow.position.y = 0.0012; aim.add(arrow);
+  const shaftGeo = new THREE.PlaneGeometry(1, 1).translate(0, 0.5, 0).rotateX(-Math.PI / 2);
+  const shaftEdge = new THREE.Mesh(shaftGeo, arrowEdge), shaft = new THREE.Mesh(shaftGeo, arrowMat);
+  shaftEdge.position.y = -0.0002;
+  const hs = new THREE.Shape(); hs.moveTo(-0.017, 0); hs.lineTo(0.017, 0); hs.lineTo(0, 0.03); hs.closePath();
+  const headGeo = new THREE.ShapeGeometry(hs).rotateX(-Math.PI / 2);
+  const hs2 = new THREE.Shape(); hs2.moveTo(-0.021, -0.003); hs2.lineTo(0.021, -0.003); hs2.lineTo(0, 0.035); hs2.closePath();
+  const headEdge = new THREE.Mesh(new THREE.ShapeGeometry(hs2).rotateX(-Math.PI / 2), arrowEdge), head = new THREE.Mesh(headGeo, arrowMat);
+  headEdge.position.y = -0.0002;
+  arrow.add(shaftEdge, shaft, headEdge, head);
+  const setArrow = (len, width) => {
+    shaft.scale.set(width, 1, len); shaftEdge.scale.set(width + 0.005, 1, len);
+    head.position.z = -len; headEdge.position.z = -len;
+  };
+  // guides keep their true colours (no film tone mapping), so they stand out on the light board
+  for (const m of [dotMat, dotMat2, ghost.material, power.material, arrowMat]) m.toneMapped = false;
   const bad = new THREE.Mesh(new THREE.RingGeometry(STRIKER_R + 0.002, STRIKER_R + 0.006, 36).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xff4040, transparent: true, opacity: 0.9, depthWrite: false }));
   bad.position.y = 0.0009; bad.visible = false; group.add(bad);
 
-  return { group, aim, dots, dots2, ghost, power, bad, frameW: FW, frameTop: FTOP };
+  return { group, aim, dots, dots2, ghost, power, bad, arrow, arrowMat, setArrow, frameW: FW, frameTop: FTOP };
 }
