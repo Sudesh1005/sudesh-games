@@ -179,6 +179,17 @@ function setupProc(h, model, body) {
       E.corr = new THREE.Quaternion().setFromUnitVectors(dF, target);
     }
   }
+  // legs too: the rest pose stands with the feet apart, so swing each thigh in until the leg
+  // (hip to ankle) points almost straight down; the knee and foot keep their bending axes
+  for (const [a, e, f, s] of [['lLeg', 'lKnee', 'lFoot', -1], ['rLeg', 'rKnee', 'rFoot', 1]]) {
+    const A = J[a], E = J[e], F = J[f];
+    if (!A || !E || !F) continue;
+    const d = posChar(F.b).sub(posChar(A.b)).normalize();
+    d.z = 0; d.normalize();                          // only fix the sideways spread, not the forward lean
+    const target = new THREE.Vector3(s * 0.035, -1, 0).normalize();
+    A.corr = new THREE.Quaternion().setFromUnitVectors(d, target);
+    E.corrParent = A.corr; F.corrParent = A.corr;
+  }
   const hipsRest = J.hips ? J.hips.b.position.clone() : null;
   let hipsScale = 1;
   if (J.hips && J.hips.b.parent) {
