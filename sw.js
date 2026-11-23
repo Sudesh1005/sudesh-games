@@ -1,11 +1,11 @@
 // Service worker for the installable Games app.
 // Pages, scripts and styles: network first (so updates show up straight away), cached copy when offline.
 // Libraries from the CDN, fonts and the big character models: cache first (they never change).
-const VERSION = 'v2';
+const VERSION = 'v3';
 const CACHE = 'sudesh-games-' + VERSION;
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './pwa.js', './icons/icon-192.png', './icons/icon-512.png',
-  './GTA-Game/', './Car-Race/', './Bike-Race/', './Target-Shooter/', './Cricket-Game/', './Carrom-Game/',
+  './GTA-Game/', './Car-Race/', './Bike-Race/', './Target-Shooter/', './Cricket-Game/', './Carrom-Game/', './Battle-Game/',
 ];
 
 self.addEventListener('install', (e) => {
