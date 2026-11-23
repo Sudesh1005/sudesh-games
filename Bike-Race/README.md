@@ -19,6 +19,15 @@ A 3D motorbike racing game that runs in the browser. Race point to point through
 - Best times saved in the browser (localStorage)
 - Touch controls on phones, and gamepad support
 
+## Online with friends (2 to 6 players)
+
+Press **PLAY ONLINE WITH FRIENDS**, type your name and **CREATE ROOM** to get a 6-letter code (or copy the invite link). Friends type their name and the code and press **JOIN**. Everyone rides the bike and colour they picked in the menu.
+
+- Only the players' bikes are on the road: no computer riders.
+- The host picks the route and the road traffic: **Off** (default), Light, Normal or Heavy. With traffic on, every player sees the same vehicles.
+- Each player's screen rides their own bike and sends its position about 15 times a second through the host, which shares it with everyone, so all screens show the same race and the same results. Other riders have name tags.
+- The browsers connect directly with WebRTC using [PeerJS](https://peerjs.com) (loaded only when you play online). Some networks (strict office/college Wi-Fi, some mobile data) block direct connections.
+
 ## Controls
 
 | Key | Action |
@@ -57,6 +66,7 @@ js/rider.js     the rider: character model, riding gear and riding pose
 js/models.js    character model loader (from Kadal Nagaram)
 js/human.js     built-in rider used until the models load
 js/ai.js        rival riders
+js/net.js       online rooms (PeerJS / WebRTC)
 js/input.js     keyboard, touch buttons and gamepad
 js/audio.js     synthesised sound
 ```

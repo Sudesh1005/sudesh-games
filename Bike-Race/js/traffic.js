@@ -73,7 +73,7 @@ export class Traffic {
     const spacing = { light: 150, normal: 100, heavy: 66 }[density] || 100;
     const names = Object.keys(TYPES), total = names.reduce((a, n) => a + TYPES[n].weight, 0);
     const pick = () => { let x = r() * total; for (const n of names) { x -= TYPES[n].weight; if (x <= 0) return n; } return 'car'; };
-    for (let k = 0; k < road.lanes; k++) {
+    for (let k = 0; k < (density === 'none' ? 0 : road.lanes); k++) { // 'none': an empty road
       const opp = road.isOpp(k), lat = road.laneLat(k);
       const base = road.opp ? 11 : 15; // highway traffic moves faster
       const speed = opp ? 14 + r() * 4 : base + (road.same > 1 ? (k / (road.same - 1)) * 9 : 0) + r() * 2;
