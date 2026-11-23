@@ -238,12 +238,16 @@ export function buildBoard(renderer, low) {
 
   // aim guide (dots), pull line and ghost striker ring, all drawn on top of the board
   const dotGeo = new THREE.CircleGeometry(0.0036, 12).rotateX(-Math.PI / 2);
-  const dotMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthWrite: false });
-  const dotMat2 = new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.9, depthWrite: false });
+  // guide dots: same colour as the arrow, each on a dark rim so they show on the light board
+  const dotMat = new THREE.MeshBasicMaterial({ color: 0x4dd27a, transparent: true, opacity: 0.95, depthWrite: false });
+  const dotMat2 = new THREE.MeshBasicMaterial({ color: 0x1f5bff, transparent: true, opacity: 0.95, depthWrite: false });
+  const rimMat = new THREE.MeshBasicMaterial({ color: 0x1a120c, transparent: true, opacity: 0.6, depthWrite: false });
+  const rimGeo = new THREE.CircleGeometry(0.0052, 12).rotateX(-Math.PI / 2);
   const aim = new THREE.Group(); aim.visible = false; group.add(aim);
   const dots = [], dots2 = [];
-  for (let i = 0; i < 70; i++) { const d = new THREE.Mesh(dotGeo, dotMat); d.position.y = 0.0006; aim.add(d); dots.push(d); }
-  for (let i = 0; i < 24; i++) { const d = new THREE.Mesh(dotGeo, dotMat2); d.position.y = 0.0007; aim.add(d); dots2.push(d); }
+  const dot = (mat, y) => { const d = new THREE.Mesh(dotGeo, mat), r = new THREE.Mesh(rimGeo, rimMat); r.position.y = -0.0002; d.add(r); d.position.y = y; aim.add(d); return d; };
+  for (let i = 0; i < 40; i++) dots.push(dot(dotMat, 0.0007));
+  for (let i = 0; i < 16; i++) dots2.push(dot(dotMat2, 0.0008));
   const ghost = new THREE.Mesh(new THREE.RingGeometry(STRIKER_R - 0.0015, STRIKER_R, 36).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7, depthWrite: false }));
   ghost.position.y = 0.0008; aim.add(ghost);
   const power = new THREE.Mesh(new THREE.RingGeometry(STRIKER_R + 0.004, STRIKER_R + 0.009, 48, 1, 0, Math.PI * 2).rotateX(-Math.PI / 2),
@@ -271,5 +275,5 @@ export function buildBoard(renderer, low) {
   const bad = new THREE.Mesh(new THREE.RingGeometry(STRIKER_R + 0.002, STRIKER_R + 0.006, 36).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xff4040, transparent: true, opacity: 0.9, depthWrite: false }));
   bad.position.y = 0.0009; bad.visible = false; group.add(bad);
 
-  return { group, aim, dots, dots2, ghost, power, bad, arrow, arrowMat, setArrow, frameW: FW, frameTop: FTOP };
+  return { group, aim, dots, dots2, dotMat, ghost, power, bad, arrow, arrowMat, setArrow, frameW: FW, frameTop: FTOP };
 }
