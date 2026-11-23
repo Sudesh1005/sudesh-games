@@ -1,7 +1,7 @@
 {
   "name": "Sudesh Games",
   "short_name": "Games",
-  "description": "Browser games: open-world city, car and bike racing, target shooting and cricket.",
+  "description": "Browser games: open-world city, car and bike racing, target shooting, cricket and carrom.",
   "id": "./",
   "start_url": "./",
   "scope": "./",
@@ -21,6 +21,7 @@
     { "name": "Vegam Racing", "url": "Car-Race/" },
     { "name": "Kaathu Riders", "url": "Bike-Race/" },
     { "name": "Target Shooter", "url": "Target-Shooter/" },
-    { "name": "Kaathu Cricket", "url": "Cricket-Game/" }
+    { "name": "Kaathu Cricket", "url": "Cricket-Game/" },
+    { "name": "Carrom Raja", "url": "Carrom-Game/" }
   ]
 }
