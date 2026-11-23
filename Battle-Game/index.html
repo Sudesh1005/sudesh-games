@@ -87,8 +87,11 @@
       <div class="logo"><span class="l1">THEEVU</span><span class="l2">YUDHAM</span></div>
       <p class="tag">Island battle. Land, find guns, fight, and be the last one standing.</p>
       <button id="start" class="primary">BATTLE (SOLO)</button>
+      <button id="online">PLAY ONLINE WITH FRIENDS</button>
       <button id="training">TRAINING GROUND</button>
-      <p class="note">Battle: jump from the plane with the computer players, find guns, armour and med kits, stay inside the safe zone, and be the last one standing. Online matches with friends come in the next update.</p>
+      <label class="lbl" for="m-name">Your name (for online)</label>
+      <input id="m-name" maxlength="14" placeholder="Type your name" autocomplete="nickname">
+      <p class="note">Battle: jump from the plane with the computer players, find guns, armour and med kits, stay inside the safe zone, and be the last one standing. Online: 2 to 6 friends fight each other (no computer players).</p>
       <div class="row2">
         <div><label class="lbl">Computer players</label><div class="seg" id="m-lvl"><button data-v="easy">Easy</button><button data-v="normal">Normal</button><button data-v="hard">Hard</button></div></div>
         <div></div>
@@ -133,7 +136,39 @@
       <p id="o-sub" class="note"></p>
       <div id="o-stats"></div>
       <button id="o-again" class="primary">PLAY AGAIN</button>
+      <button id="o-spec" class="hidden">SPECTATE</button>
       <button id="o-menu">MENU</button>
+    </div>
+  </div>
+
+  <div id="specbar" class="hidden"><span>Watching <b id="spec-name"></b></span><button id="spec-next">NEXT PLAYER</button><button id="spec-results">RESULTS</button></div>
+
+  <div id="lobby" class="overlay hidden">
+    <div class="card">
+      <button id="lb-close" class="x" aria-label="Close">✕</button>
+      <h2>PLAY ONLINE</h2>
+      <div id="lb-entry">
+        <label class="lbl" for="lb-name">Your name</label>
+        <input id="lb-name" maxlength="14" placeholder="Type your name" autocomplete="nickname">
+        <button id="lb-create" class="primary">CREATE ROOM</button>
+        <div class="or"><span>or join a friend's room</span></div>
+        <div class="lb-row">
+          <input id="lb-code" maxlength="6" placeholder="ROOM CODE" autocomplete="off" autocapitalize="characters" spellcheck="false">
+          <button id="lb-joinbtn">JOIN</button>
+        </div>
+        <p class="note">2 to 6 friends, each on their own phone or computer. Only your group plays: no computer players. Works best on home Wi-Fi; some office, college or mobile networks block it.</p>
+      </div>
+      <div id="lb-room" class="hidden">
+        <div class="lb-code">
+          <div><span>ROOM CODE</span><b id="lb-codeshow"></b></div>
+          <button id="lb-copy">COPY INVITE LINK</button>
+        </div>
+        <ul id="lb-players"></ul>
+        <button id="lb-start" class="primary">START MATCH</button>
+        <p id="lb-wait" class="note"></p>
+        <button id="lb-leave">LEAVE ROOM</button>
+      </div>
+      <p id="lb-status"></p>
     </div>
   </div>
 

@@ -3,7 +3,7 @@
 // (the player and the other computer players): strafing, bursts, reloading, switching guns, healing.
 import * as THREE from 'three';
 import { Soldier } from './soldier.js';
-import { Inventory, CAP, VEST } from './loot.js';
+import { Inventory, CAP, VEST, dropBag } from './loot.js';
 import { GUNS } from './weapons.js';
 import { airStep } from './drop.js';
 import { castShot, bulletDamage } from './combat.js';
@@ -305,15 +305,5 @@ export class Bot {
   }
 
   // what they drop when they die: their guns, ammo and meds
-  dropLoot(loot) {
-    const s = this.s, inv = this.inv, items = [];
-    inv.guns.forEach((g) => { if (g) items.push(['gun:' + g.def.id, g.ammo]); });
-    for (const k in inv.ammo) if (inv.ammo[k] > 0) items.push(['ammo:' + k, inv.ammo[k]]);
-    if (inv.bandage) items.push(['bandage', inv.bandage]);
-    for (let i = 0; i < inv.medkit; i++) items.push(['medkit', 1]);
-    items.forEach(([kind, n], i) => {
-      const a = (i / Math.max(1, items.length)) * Math.PI * 2;
-      loot.add(kind, s.pos.x + Math.cos(a) * 0.8, s.pos.y + 0.02, s.pos.z + Math.sin(a) * 0.8, n);
-    });
-  }
+  dropLoot(loot) { dropBag(loot, this.s.pos, this.inv); }
 }

@@ -101,11 +101,13 @@ export class Loot {
     if (k === 'gun') return GUNS[v].mag;
     return 1;
   }
-  add(kind, x, y, z, n) {
-    const it = { id: this.nextId++, kind, n, x, y, z, mesh: makeMesh(kind), taken: false };
-    it.mesh.position.set(x, y, z); it.mesh.rotation.y = this.rnd() * Math.PI * 2;
+  // id is given for items another player dropped (online); local drops get a new id and are announced via onAdd
+  add(kind, x, y, z, n, id) {
+    const it = { id: id ?? this.nextId++, kind, n, x, y, z, mesh: makeMesh(kind), taken: false };
+    it.mesh.position.set(x, y, z); it.mesh.rotation.y = ((it.id * 2.399) % 6.283);
     this.scene.add(it.mesh);
     this.items.push(it);
+    if (id === undefined && this.onAdd) this.onAdd(it);
     return it;
   }
   remove(it) { it.taken = true; this.scene.remove(it.mesh); }
@@ -181,4 +183,18 @@ export class Loot {
     }
     return null;
   }
+}
+
+// Everything in a bag dropped where its owner fell: guns, ammo, meds.
+export function dropBag(loot, pos, inv) {
+  const items = [];
+  inv.guns.forEach((g) => { if (g) items.push(['gun:' + g.def.id, g.ammo]); });
+  for (const k in inv.ammo) if (inv.ammo[k] > 0) items.push(['ammo:' + k, inv.ammo[k]]);
+  if (inv.bandage) items.push(['bandage', inv.bandage]);
+  for (let i = 0; i < inv.medkit; i++) items.push(['medkit', 1]);
+  for (let i = 0; i < inv.grenade; i++) items.push(['grenade', 1]);
+  items.forEach(([kind, n], i) => {
+    const a = (i / Math.max(1, items.length)) * Math.PI * 2;
+    loot.add(kind, pos.x + Math.cos(a) * 0.8, pos.y + 0.02, pos.z + Math.sin(a) * 0.8, n);
+  });
 }

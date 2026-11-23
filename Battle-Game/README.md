@@ -2,15 +2,15 @@
 
 A third-person island battle game in the browser: land on the island, find guns, fight, and be the last one standing. Built with plain HTML, CSS and JavaScript plus [three.js](https://threejs.org) from a CDN, with no build step. The island, buildings, guns and sounds are generated in code; the soldier uses the same character models as Kadal Nagaram (`../GTA-Game/models/`).
 
-## Status: step 3 of 5 (battles against computer players)
+## Status: step 4 of 5 (online with friends)
 
 | Step | What | Status |
 |---|---|---|
 | 1 | Island, soldier, third-person camera, 2 guns, controls | done |
 | 2 | Loot, armour, med kits, 5 guns, shrinking zone, plane + parachute | done |
 | 3 | Computer players (single-player battles) | done |
-| 4 | Online with friends (2–6 players, last one standing wins) | next |
-| 5 | Sound, effects, phone tuning, polish | |
+| 4 | Online with friends (2–6 players, last one standing wins) | done |
+| 5 | Sound, effects, phone tuning, polish | next |
 
 ## Battle (step 2)
 
@@ -32,6 +32,13 @@ A third-person island battle game in the browser: land on the island, find guns,
 | P-9 Pistol | light | backup |
 
 Armour vests absorb half of each hit until the armour runs out; helmets cut headshot damage by 30% / 50%. Bandage: +15 health (2 s), med kit: +75 (5 s); you can walk while healing, firing stops it. Grenades bounce and go off after 2.6 s (7 m blast, walls block it).
+
+## Online with friends (step 4)
+
+- Press **PLAY ONLINE WITH FRIENDS**, type your name and **CREATE ROOM** to get a 6-letter code (or copy the invite link). Friends type their name and the code and press **JOIN**. 2 to 6 players, each on their own phone or computer; the host presses **START MATCH**.
+- Only your group is on the island: no computer players. Everyone gets the same island loot, plane route and zone, jumps when they like, and fights everyone else. The last one standing wins; the others see who won.
+- When you're out you can **SPECTATE** the players still alive (NEXT PLAYER / RESULTS). When the match is over, the host starts the **NEXT MATCH** with whoever is in the room (new friends can join between matches).
+- How it works: the browsers connect directly with WebRTC using [PeerJS](https://peerjs.com) (loaded only when you play online); the host's browser passes every message on to the others. Each phone moves its own soldier and sends where it is about 15 times a second; the others draw it slightly behind real time so it moves smoothly. The shooter's screen decides what a bullet hits and tells the player who was hit, whose screen takes the damage (armour, helmet) and announces a death. Picking up and dropping loot is shared, so an item can only be taken once. If someone leaves, they're out of the match. Some networks (strict office/college Wi-Fi, some mobile data) block direct connections.
 
 ## Training ground (step 1)
 
@@ -58,7 +65,7 @@ python -m http.server 8000
 # open http://localhost:8000/Battle-Game/
 ```
 
-Testing aids (URL options): `?auto` starts a battle (`?auto=training` the training ground), `?bots=5` sets how many computer players, `?level=hard`, `?god` makes you unhurtable, `?seed=7` fixes the loot, zone and plane route, `?speed=10` runs time faster, `?touch` shows phone controls, `?q=low|med|high` graphics, `?simple` skips the character model, `?cam=side|front` looks at the soldier from the side or front.
+Testing aids (URL options): `?mp=host&name=A` / `?mp=join&room=CODE&name=B` create / join an online room automatically, `?auto` starts a battle (`?auto=training` the training ground), `?bots=5` sets how many computer players, `?level=hard`, `?god` makes you unhurtable, `?seed=7` fixes the loot, zone and plane route, `?speed=10` runs time faster, `?touch` shows phone controls, `?q=low|med|high` graphics, `?simple` skips the character model, `?cam=side|front` looks at the soldier from the side or front.
 
 ## Project layout
 
@@ -75,6 +82,7 @@ js/drop.js      the plane route, plane and parachute models
 js/grenade.js   thrown grenades
 js/bots.js      computer players: drop, looting, zone, finding their way into buildings, fighting
 js/combat.js    bullet hits and damage (shared by everyone)
+js/net.js       online rooms for 2–6 players (PeerJS / WebRTC)
 js/fx.js        muzzle flashes, tracers, impact puffs
 js/input.js     keyboard, mouse and touch controls
 js/audio.js     synthesised sounds

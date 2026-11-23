@@ -4,7 +4,8 @@ import * as THREE from 'three';
 import { World, AREAS, HALF, WATER_Y } from './world.js';
 import { Soldier } from './soldier.js';
 import { GUNS, AMMO } from './weapons.js';
-import { Inventory, Loot, itemName } from './loot.js';
+import { Inventory, Loot, itemName, dropBag } from './loot.js';
+import { Room, cleanCode, cleanName, MAX_PLAYERS } from './net.js';
 import { Zone, STAGES } from './zone.js';
 import { planeRoute, makePlane, airStep, PLANE_Y, PLANE_SPEED } from './drop.js';
 import { Bot, BOT_NAMES, BOT_LEVELS } from './bots.js';
@@ -25,6 +26,7 @@ const TIME_SCALE = clamp(+params.get('speed') || 1, 0.1, 30); // testing aid
 const GOD = params.has('god'); // testing aid: the player can't be hurt
 document.body.classList.toggle('touch', isTouch);
 function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (s) => { s = Math.max(0, Math.ceil(s)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 
 /* ------------------------------------------------------------------ settings */
@@ -32,7 +34,7 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (_) { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) { /* ignore */ } },
 };
-const S = Object.assign({ q: isTouch ? 'low' : 'med', sens: 1, level: 'normal' }, store.get('battle-settings', {}));
+const S = Object.assign({ q: isTouch ? 'low' : 'med', sens: 1, level: 'normal', name: '' }, store.get('battle-settings', {}));
 if (params.has('q')) S.q = params.get('q');
 if (!['low', 'med', 'high'].includes(S.q)) S.q = 'med';
 if (params.has('level')) S.level = params.get('level');
@@ -68,11 +70,13 @@ const input = new Input($('game'), isTouch);
 const fx = new FX(scene);
 const G = {
   state: 'boot', mode: 'battle', world: null, player: null, inv: new Inventory(), yaw: 0, pitch: 0, targets: [], enemies: [], bots: [], killer: null,
+  online: false, room: null, remotes: new Map(), seq: 0, sendT: 0, spectate: null,
   camPos: new THREE.Vector3(), aimK: 0, stepT: 0, area: '', areaT: 0, kills: 0, shots: 0, hits: 0, dmgDealt: 0,
   loot: null, zone: null, plane: null, route: null, planeT: 0, grenades: null, heal: null, matchT: 0, overT: 0, pickT: 0, zoneTickT: 0, shake: 0,
 };
 window.__battle = G; G.input = input; G.camera = camera;
 const gun = () => G.inv.gun();
+let room = null; // the online room we're in (null when playing alone)
 
 /* ------------------------------------------------------------------ build the island (once) */
 function buildWorld() {
@@ -105,6 +109,8 @@ function clearMatch() {
   if (G.plane) { scene.remove(G.plane); G.plane = null; }
   for (const t of G.targets) scene.remove(t.root);
   for (const b of G.bots) scene.remove(b.s.root);
+  for (const r of G.remotes.values()) scene.remove(r.s.root);
+  G.remotes.clear(); G.spectate = null; $('specbar').classList.add('hidden');
   G.targets = []; G.enemies = []; G.bots = []; G.killer = null;
   G.grenades.clear();
   G.heal = null;
@@ -116,15 +122,21 @@ function resetPlayer() {
   G.inv = new Inventory();
   G.kills = 0; G.shots = 0; G.hits = 0; G.dmgDealt = 0; G.matchT = 0; G.recoil = 0;
 }
-function startMatch(mode) {
+// net (online only): { seed, players: [{ id, name }], myIdx }
+function startMatch(mode, net) {
   audio.init();
   clearMatch(); resetPlayer();
-  G.mode = mode;
-  const seed = params.has('seed') ? +params.get('seed') : (Math.random() * 1e9) | 0;
+  G.mode = mode; G.online = mode === 'online';
+  const seed = net ? net.seed : params.has('seed') ? +params.get('seed') : (Math.random() * 1e9) | 0;
   const R = rng(seed);
   G.seed = seed;
   G.loot = new Loot(scene, R);
   G.loot.spawnAll(G.world.lootSpots);
+  if (net) {
+    // items dropped by each player get ids nobody else uses, and are announced to the others
+    G.loot.nextId = 100000 * (net.myIdx + 1);
+    G.loot.onAdd = (it) => { if (room) room.send({ t: 'drop', from: room.me, id: it.id, kind: it.kind, n: it.n, x: +it.x.toFixed(2), y: +it.y.toFixed(2), z: +it.z.toFixed(2) }); };
+  }
   const P = G.player;
   if (mode === 'training') {
     G.inv.give('ar', 30); G.inv.give('pistol', 12);
@@ -142,12 +154,23 @@ function startMatch(mode) {
     P.air = 'plane';
     // the computer players, each with its own jump point along the route
     const names = BOT_NAMES.slice().sort(() => R() - 0.5);
-    for (let i = 0; i < BOT_COUNT; i++) {
+    for (let i = 0; i < (net ? 0 : BOT_COUNT); i++) {
       const b = new Bot(G.world, { name: names[i % names.length], level: S.level, rnd: rng(seed + 101 * (i + 1)), model: Q !== 'low', index: 1 + (i % 4), low: Q === 'low' });
       b.s.addTo(scene); b.s.root.visible = false;
       G.bots.push(b);
     }
     G.enemies = G.bots.map((b) => b.s);
+    // online: the other players, moved by their own phones
+    if (net) {
+      net.players.forEach((p, i) => {
+        if (p.id === room.me) return;
+        const s2 = new Soldier(G.world, { look: randomLook(), model: Q !== 'low' ? 'ped' : null, index: 1 + (i % 4), low: Q === 'low' });
+        s2.name = cleanName(p.name) || 'Player'; s2.remote = p.id; s2.air = 'plane';
+        s2.addTo(scene); s2.root.add(nameTag(s2.name));
+        G.remotes.set(p.id, { s: s2, snaps: [] });
+      });
+      G.enemies = [...G.remotes.values()].map((r) => r.s);
+    }
     G.yaw = Math.atan2(G.route.dx, G.route.dz); G.pitch = -0.25;
     $('matchinfo').classList.remove('hidden');
   }
@@ -157,7 +180,9 @@ function startMatch(mode) {
   $('menu').classList.add('hidden'); $('over').classList.add('hidden'); $('hud').classList.remove('hidden');
   document.body.classList.add('playing');
   input.lock();
+  $('o-spec').classList.add('hidden');
   if (mode === 'training') { toast('TRAINING GROUND', 2.5); feed('Shoot the targets in the streets. Loot lies in every building.'); }
+  else if (net) feed(`Online match: ${net.players.length} players. Last one standing wins.`);
   else { toast('GET READY TO JUMP', 2.5); feed(isTouch ? 'Tap JUMP when the plane is over a place you like.' : 'Press SPACE to jump when the plane is over a place you like.'); }
 }
 
@@ -240,6 +265,7 @@ function fire() {
       if (block) { end.set(...block.point); hitT = null; }
     }
     if (k < 3) fx.tracer(_m, end);
+    if (k === 0) G.lastEnd = end;
     if (hitT) {
       const dealt = applyHit(P, hitT, bulletDamage(d, best, hitHead, hitT.helm), hitHead, d.name, true);
       G.dmgDealt += dealt; G.hits++;
@@ -252,6 +278,7 @@ function fire() {
   }
   if (!scoped) fx.flash(P.muzzle, d.id === 'pistol' || d.id === 'smg' ? 0.35 : 0.55);
   audio.shot(d.sound);
+  if (room && G.online) room.send({ t: 'shot', from: room.me, a: [+_m.x.toFixed(2), +_m.y.toFixed(2), +_m.z.toFixed(2)], b: G.lastEnd.toArray().map((v) => +v.toFixed(2)), g: d.id });
   P.recoilKick = 1;
   const kick = d.recoil * (0.7 + Math.random() * 0.6) * (G.aimK > 0.5 ? 0.6 : 1);
   G.pitch = clamp(G.pitch + kick, -1.3, 1.35); G.recoil = (G.recoil || 0) + kick;
@@ -263,6 +290,11 @@ function fire() {
 // silent = the hit marker is handled by the caller. Returns the damage done.
 function applyHit(from, target, dmg, head, how, silent) {
   if (!target.alive || (GOD && target === G.player)) return 0;
+  if (target.remote) {
+    if (room && from === G.player) room.send({ t: 'hit', from: room.me, to: target.remote, dmg: +dmg.toFixed(1), head: head ? 1 : 0, how });
+    if (from === G.player && !silent) hitMarker(head);
+    return Math.min(dmg, 100);
+  }
   const dealt = target.damage(dmg);
   if (target === G.player) hurt(from);
   else if (target.bot) target.bot.onHurt(from);
@@ -276,7 +308,11 @@ function died(t, from, how, head) {
   feed(`<b>${by}</b> ➜ ${t === G.player ? 'You' : t.name || 'target'} <em>${head ? 'headshot' : how}</em>`);
   if (G.mode === 'training' && t !== G.player) t.respawnT = 4;
   if (t.bot) { t.bot.dropLoot(G.loot); t.deadT = 0; }
-  if (t === G.player) G.killer = by;
+  if (t === G.player) {
+    G.killer = by;
+    if (G.mode !== 'training') dropBag(G.loot, G.player.pos, G.inv);
+    if (room && G.online) room.send({ t: 'dead', from: room.me, by: from === G.player ? room.me : from && from.remote ? from.remote : null, how, head: head ? 1 : 0 });
+  }
 }
 
 let hitTimer = 0;
@@ -312,7 +348,9 @@ function throwNade() {
   G.inv.grenade--; G.heal = null;
   camDir(_d);
   const dir = _d.clone().add(new THREE.Vector3(0, 0.25, 0)).normalize();
-  G.grenades.throw(new THREE.Vector3(P.pos.x + _d.x * 0.5, P.pos.y + P.height - 0.2, P.pos.z + _d.z * 0.5), dir, 'You');
+  const from = new THREE.Vector3(P.pos.x + _d.x * 0.5, P.pos.y + P.height - 0.2, P.pos.z + _d.z * 0.5);
+  G.grenades.throw(from, dir, 'You');
+  if (room && G.online) room.send({ t: 'nade', from: room.me, p: from.toArray().map((v) => +v.toFixed(2)), d: dir.toArray().map((v) => +v.toFixed(3)) });
   audio.swap(); drawItems();
 }
 function explode(p, owner) {
@@ -320,14 +358,14 @@ function explode(p, owner) {
   const dist = camera.position.distanceTo(p);
   audio.boom(clamp(1.2 - dist / 120, 0.2, 1));
   G.shake = Math.max(G.shake, clamp(1 - dist / 40, 0, 1) * 0.6);
-  for (const s of [G.player].concat(shootables())) {
+  for (const s of [G.player].concat(G.online ? [] : shootables())) {
     if (!s.alive) continue;
     const c = s.pos.clone().setY(s.pos.y + 1), d = c.distanceTo(p);
     if (d > BLAST_R) continue;
     const dir = c.clone().sub(p).normalize();
     const wall = G.world.raycast([p.x, p.y + 0.1, p.z], [dir.x, dir.y, dir.z], d);
     if (wall && wall.kind === 'wall') continue;
-    const from = owner === 'You' ? G.player : null;
+    const from = owner === 'You' ? G.player : owner && owner.pos ? owner : null;
     const dealt = applyHit(from, s, BLAST_DMG * (1 - d / BLAST_R), false, 'grenade');
     if (from === G.player && s !== G.player) G.dmgDealt += dealt;
   }
@@ -353,7 +391,7 @@ function updatePickup(dt) {
   for (const it of near) {
     if (Math.hypot(it.x - P.pos.x, it.z - P.pos.z) > 1.4) continue;
     const msg = G.loot.take(it, G.inv, P, true);
-    if (msg) { feed(msg); audio.pickup(); drawSlots(); drawItems(); }
+    if (msg) { feed(msg); audio.pickup(); drawSlots(); drawItems(); sendTake(it); }
   }
   G.pickList = G.loot.near(P.pos.x, P.pos.y, P.pos.z, 2.2).filter((it) => it.kind.startsWith('gun:')).slice(0, 3);
   const html = G.pickList.map((it, i) => `<button data-id="${it.id}">${isTouch ? '' : i === 0 ? '<kbd>F</kbd>' : ''}${itemName(it)}</button>`).join('');
@@ -366,8 +404,9 @@ function takeGun(id) {
   const it = G.loot.items.find((x) => x.id === id && !x.taken);
   if (!it) return;
   const msg = G.loot.take(it, G.inv, G.player, false);
-  if (msg) { feed(msg); audio.pickup(); G.player.setGun(gun() ? gun().def.id : null); drawSlots(); G.pickT = 0; $('pick').dataset.html = ''; }
+  if (msg) { feed(msg); audio.pickup(); G.player.setGun(gun() ? gun().def.id : null); drawSlots(); G.pickT = 0; $('pick').dataset.html = ''; sendTake(it); }
 }
+function sendTake(it) { if (room && G.online) room.send({ t: 'take', from: room.me, id: it.id, n: it.n, taken: it.taken ? 1 : 0 }); }
 function drawItems() {
   const inv = G.inv;
   for (const [id, n] of [['useBand', inv.bandage], ['useKit', inv.medkit], ['useNade', inv.grenade]]) {
@@ -453,8 +492,10 @@ function updateCamera(dt, aiming) {
   else if (P.air === 'fall') { dist = 6; side = 0; lift = 0.8; py = P.pos.y + 0.6; }
   else if (P.air === 'chute') { dist = 8; side = 0; lift = 1.5; py = P.pos.y + 2; }
   else if (!P.alive) { dist = 5; side = 0; lift = 1.5; }
+  const SP = G.spectate && G.spectate.alive ? G.spectate : null;
+  if (SP) { dist = 4.5; side = 0.6; lift = 0.6; py = SP.pos.y + SP.height - 0.2; if (SP.air === 'chute' || SP.air === 'fall') { dist = 8; side = 0; lift = 1.5; } }
   const rx = -Math.cos(G.yaw), rz = Math.sin(G.yaw);
-  const bx = P.air === 'plane' ? _piv.x : P.pos.x, bz = P.air === 'plane' ? _piv.z : P.pos.z;
+  const bx = SP ? SP.pos.x : P.air === 'plane' ? _piv.x : P.pos.x, bz = SP ? SP.pos.z : P.air === 'plane' ? _piv.z : P.pos.z;
   _piv.set(bx + rx * side, py + lift, bz + rz * side);
   const back = [-_d.x, -_d.y, -_d.z];
   const hit = P.air === 'plane' ? null : G.world.raycast([_piv.x, _piv.y, _piv.z], back, dist + 0.3);
@@ -596,10 +637,176 @@ function updateHUD(dt) {
   if (!$('bigmap').classList.contains('hidden')) drawBigMap();
 }
 
+/* ------------------------------------------------------------------ online with friends */
+// A floating name label above another player.
+function nameTag(name) {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 64;
+  const g = c.getContext('2d');
+  g.fillStyle = 'rgba(10,14,10,0.7)';
+  g.beginPath(); if (g.roundRect) g.roundRect(4, 10, 248, 44, 12); else g.rect(4, 10, 248, 44); g.fill();
+  g.fillStyle = '#ffffff'; g.font = 'bold 28px Rubik, Arial, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(name, 128, 33, 236);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthWrite: false, fog: false }));
+  sp.scale.set(1.6, 0.4, 1); sp.position.y = 2.15; sp.name = 'tag';
+  return sp;
+}
+function lbStatus(text, isErr = false) { const st = $('lb-status'); st.textContent = text; st.classList.toggle('err', isErr); }
+function lbView(which) { $('lb-entry').classList.toggle('hidden', which !== 'entry'); $('lb-room').classList.toggle('hidden', which !== 'room'); }
+function openOnline(code) {
+  audio.init();
+  $('lobby').classList.remove('hidden');
+  $('lb-name').value = S.name;
+  if (code) $('lb-code').value = cleanCode(code);
+  if (room) { lbView('room'); renderLobby(room.players, room.info, room.state); } else { lbView('entry'); lbStatus(''); }
+}
+function lobbyName() {
+  const name = cleanName($('lb-name').value);
+  if (!name) { lbStatus('Type your name first, so the others know who you are.', true); $('lb-name').focus(); return null; }
+  S.name = name; save(); return name;
+}
+function makeRoom() { return new Room({ onLobby: renderLobby, onMsg: onNetMsg, onLeave: onNetLeave, onClosed: onNetClosed }); }
+async function createRoom() {
+  const name = lobbyName(); if (!name) return;
+  $('lb-create').disabled = true; lbStatus('Creating your room…');
+  const r = makeRoom();
+  try { await r.create(name, {}); room = r; G.room = r; lbView('room'); lbStatus(''); }
+  catch (e) { r.leave(); lbStatus(e.message, true); }
+  $('lb-create').disabled = false;
+}
+async function joinRoom() {
+  const name = lobbyName(); if (!name) return;
+  const code = cleanCode($('lb-code').value); $('lb-code').value = code;
+  if (code.length !== 6) { lbStatus('Room codes have 6 letters and numbers.', true); return; }
+  $('lb-joinbtn').disabled = true; lbStatus('Joining room ' + code + '…');
+  const r = makeRoom(); room = r; G.room = r;
+  try { await r.join(code, name); lbView('room'); lbStatus(''); }
+  catch (e) { room = null; G.room = null; lbView('entry'); lbStatus(e.message, true); }
+  $('lb-joinbtn').disabled = false;
+}
+function leaveRoom() {
+  if (room) room.leave();
+  room = null; G.room = null;
+  $('lobby').classList.add('hidden');
+  showMenu();
+}
+function renderLobby(players, info, state) {
+  if (!room) return;
+  $('lb-codeshow').textContent = room.code;
+  $('lb-players').innerHTML = players.map((p) => `<li><b>${esc(p.name)}</b>${p.host ? '<em>HOST</em>' : ''}${p.id === room.me ? '<em class="you">YOU</em>' : ''}</li>`).join('') +
+    (players.length < MAX_PLAYERS ? `<li class="empty">${MAX_PLAYERS - players.length} more can join</li>` : '');
+  if (room.isHost) {
+    const n = players.length;
+    $('lb-start').classList.remove('hidden');
+    $('lb-start').disabled = n < 2;
+    $('lb-start').textContent = n < 2 ? 'WAITING FOR FRIENDS…' : `START MATCH (${n} PLAYERS)`;
+    $('lb-wait').textContent = n < 2 ? 'Send the code or link to your friends (2 to 6 players).' : '';
+  } else {
+    $('lb-start').classList.add('hidden');
+    $('lb-wait').textContent = state !== 'lobby' && !G.online ? "A match is running. You'll join the next one." : 'Waiting for the host to start the match…';
+  }
+}
+function hostStart() {
+  if (!room || !room.isHost || room.players.length < 2) return;
+  if (G.online && G.enemies.filter((e) => e.alive).length + (G.player.alive ? 1 : 0) > 1) { toast('WAIT FOR THE MATCH TO FINISH', 2); return; }
+  const m = { t: 'start', seed: (Math.random() * 1e9) | 0, players: room.players.slice(0, MAX_PLAYERS).map((p) => ({ id: p.id, name: p.name })) };
+  room.setState('playing');
+  room.send(m);
+  onlineStart(m);
+}
+function onlineStart(m) {
+  const myIdx = m.players.findIndex((p) => p.id === room.me);
+  if (myIdx < 0) return;
+  $('lobby').classList.add('hidden');
+  startMatch('online', { seed: m.seed, players: m.players, myIdx });
+}
+function onNetMsg(m) {
+  if (!m || typeof m !== 'object') return;
+  if (m.t === 'start') { onlineStart(m); return; }
+  if (!G.online) return;
+  const r = G.remotes.get(m.from), P = G.player;
+  if (m.t === 's') {
+    if (!r || !(m.n > (r.lastN || 0))) return;
+    r.lastN = m.n; r.snaps.push(Object.assign({ at: performance.now() }, m));
+    if (r.snaps.length > 30) r.snaps.shift();
+  } else if (m.t === 'shot') {
+    const d = Math.hypot(m.a[0] - P.pos.x, m.a[2] - P.pos.z);
+    if (d < 280) audio.far(m.g === 'pistol' || m.g === 'smg' ? 'pistol' : 'rifle', d);
+    if (d < 160) { fx.tracer(new THREE.Vector3(...m.a), new THREE.Vector3(...m.b)); fx.flash(new THREE.Vector3(...m.a), 0.45); }
+  } else if (m.t === 'hit') {
+    if (m.to === room.me && P.alive) applyHit(r ? r.s : null, P, clamp(+m.dmg || 0, 0, 300), !!m.head, String(m.how || '').slice(0, 20));
+  } else if (m.t === 'dead') {
+    if (!r) return;
+    r.s.alive = false; r.s.dieT = 0;
+    const byMe = m.by === room.me, killer = byMe ? 'You' : m.by ? (G.remotes.get(m.by) || { s: { name: '?' } }).s.name : 'The zone';
+    if (byMe) G.kills++;
+    feed(`<b>${esc(killer)}</b> ➜ ${esc(r.s.name)} <em>${m.head ? 'headshot' : esc(String(m.how || '').slice(0, 20))}</em>`);
+    if (G.spectate === r.s) spectateNext();
+  } else if (m.t === 'take') {
+    const it = G.loot.items.find((x) => x.id === m.id);
+    if (it && !it.taken) { if (m.taken) G.loot.remove(it); else it.n = m.n; }
+  } else if (m.t === 'drop') {
+    if (!G.loot.items.some((x) => x.id === m.id)) G.loot.add(String(m.kind), +m.x, +m.y, +m.z, +m.n || 1, m.id);
+  } else if (m.t === 'nade') {
+    if (r) G.grenades.throw(new THREE.Vector3(...m.p), new THREE.Vector3(...m.d), r.s);
+  } else if (m.t === 'win') {
+    if (r) { toast(`${r.s.name.toUpperCase()} WINS!`, 4); feed(`<b>${esc(r.s.name)}</b> is the last one standing`); }
+  }
+}
+function onNetLeave(id, name) {
+  const r = G.remotes.get(id);
+  if (G.online && r) {
+    scene.remove(r.s.root); G.remotes.delete(id);
+    G.enemies = G.enemies.filter((e) => e !== r.s);
+    if (G.spectate === r.s) spectateNext();
+  }
+  if (G.online) feed(`${esc(name)} left the match`);
+}
+function onNetClosed(reason) {
+  room = null; G.room = null;
+  showMenu(); openOnline(); lbStatus(reason, true);
+}
+// Place another player between the two updates around "now - 130 ms" (smooth even with jittery updates).
+function netPose(r) {
+  const sn = r.snaps, s = r.s;
+  if (!sn.length) return;
+  const rt = performance.now() - 130;
+  let a = null, b = null;
+  for (let k = sn.length - 1; k >= 0; k--) if (sn[k].at <= rt) { a = sn[k]; b = sn[k + 1] || null; break; }
+  if (!a) { a = sn[0]; b = null; }
+  const L = sn[sn.length - 1];
+  if (b) {
+    const f = clamp((rt - a.at) / Math.max(1, b.at - a.at), 0, 1);
+    let dy = b.yaw - a.yaw; while (dy > Math.PI) dy -= Math.PI * 2; while (dy < -Math.PI) dy += Math.PI * 2;
+    s.pos.set(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, a.z + (b.z - a.z) * f); s.yaw = a.yaw + dy * f;
+  } else { s.pos.set(a.x, a.y, a.z); s.yaw = a.yaw; }
+  s.pitch = L.pitch || 0; s.crouching = !!L.c; s.crouch = L.c ? 1 : 0; s.moveSpeed = L.v || 0; s.swim = !!L.sw; s.helm = L.helm || 0;
+  s.onGround = true; s.backwards = false;
+  const air = L.air || null;
+  if (s.air !== air) { s.air = air; s.setChute(air === 'chute'); }
+  if ((L.g || null) !== s.gunId) s.setGun(GUNS[L.g] ? L.g : null);
+  if (!L.al && s.alive) { s.alive = false; s.dieT = 0; }
+  while (sn.length > 3 && sn[1].at < rt - 400) sn.shift();
+}
+function updateRemotes(dt) {
+  for (const r of G.remotes.values()) {
+    netPose(r);
+    const d = Math.hypot(r.s.pos.x - camera.position.x, r.s.pos.z - camera.position.z);
+    if (r.s.air !== 'plane' && d < FOG + 30) { r.s.animate(dt, false); r.s.root.visible = true; } else r.s.root.visible = false;
+  }
+  // tell the others where I am (about 15 times a second)
+  G.sendT -= dt / TIME_SCALE;
+  if (room && G.sendT <= 0) {
+    G.sendT = 1 / 15;
+    const P = G.player, p = P.air === 'plane' ? planePos(G.planeT, _p) : P.pos, f = (v) => +v.toFixed(2);
+    room.send({ t: 's', from: room.me, n: ++G.seq, x: f(p.x), y: f(p.y), z: f(p.z), yaw: +P.yaw.toFixed(3), pitch: +G.pitch.toFixed(2), air: P.air || '', c: P.crouching ? 1 : 0, g: P.gunId || '', v: f(P.moveSpeed), al: P.alive ? 1 : 0, helm: P.helm, sw: P.swim ? 1 : 0 });
+  }
+}
+
 /* ------------------------------------------------------------------ results */
 function endMatch(won) {
   if (G.state !== 'play') return;
-  G.state = 'over'; G.overT = 0;
+  G.state = 'over'; G.overT = 0; G.spectate = null;
   input.unlock();
   const alive = 1 + G.enemies.filter((e) => e.alive).length, total = 1 + G.enemies.length;
   $('o-title').textContent = won ? 'WINNER!' : 'YOU DIED';
@@ -607,8 +814,26 @@ function endMatch(won) {
     : G.enemies.length ? `${G.killer && G.killer !== 'The zone' ? 'Killed by ' + G.killer : 'The zone got you'}. Placed #${alive} of ${total}.` : 'The zone got you. Stay inside the white circle on the map.';
   const stat = (l, v) => `<div><span>${l}</span><b>${v}</b></div>`;
   $('o-stats').innerHTML = stat('Rank', `#${won ? 1 : alive}`) + stat('Kills', G.kills) + stat('Damage', Math.round(G.dmgDealt)) + stat('Survived', fmt(G.matchT));
+  if (G.online) {
+    const host = room && room.isHost;
+    $('o-again').classList.toggle('hidden', !host);
+    $('o-again').textContent = 'NEXT MATCH';
+    $('o-spec').classList.toggle('hidden', won || !G.enemies.some((e) => e.alive));
+    $('o-menu').textContent = 'LEAVE ROOM';
+    if (won && room) room.send({ t: 'win', from: room.me });
+    if (host) room.setState('lobby'); // friends can join for the next match
+  } else { $('o-again').classList.remove('hidden'); $('o-again').textContent = 'PLAY AGAIN'; $('o-spec').classList.add('hidden'); $('o-menu').textContent = 'MENU'; }
   setTimeout(() => $('over').classList.remove('hidden'), won ? 1200 : 2200);
   if (won) audio.ding();
+}
+function spectateNext() {
+  const alive = G.enemies.filter((e) => e.alive);
+  if (!alive.length) { G.spectate = null; $('specbar').classList.add('hidden'); $('over').classList.remove('hidden'); return; }
+  const i = alive.indexOf(G.spectate);
+  G.spectate = alive[(i + 1) % alive.length];
+  G.yaw = G.spectate.yaw; G.pitch = -0.1;
+  $('spec-name').textContent = G.spectate.name;
+  $('specbar').classList.remove('hidden'); $('over').classList.add('hidden');
 }
 
 /* ------------------------------------------------------------------ flow */
@@ -617,7 +842,10 @@ function showMenu() {
   input.unlock();
   clearMatch();
   G.player.air = null; G.player.root.visible = true;
+  G.online = false;
   $('menu').classList.remove('hidden'); $('hud').classList.add('hidden'); $('pause').classList.add('hidden'); $('over').classList.add('hidden'); $('clickplay').classList.add('hidden');
+  $('online').textContent = room ? 'BACK TO ONLINE ROOM ' + room.code : 'PLAY ONLINE WITH FRIENDS';
+  $('m-name').value = S.name;
   document.body.classList.remove('playing', 'air');
   $('m-sens').value = S.sens;
   $('m-lvl').querySelectorAll('button').forEach((b) => {
@@ -651,7 +879,7 @@ input.onPress = (code) => {
   if (code === 'KeyG') throwNade();
 };
 function toggleMap() { if (G.state === 'play') $('bigmap').classList.toggle('hidden'); }
-$('game').addEventListener('click', () => { if (G.state === 'play' && !input.locked) input.lock(); });
+$('game').addEventListener('click', () => { if ((G.state === 'play' || G.spectate) && !input.locked) input.lock(); });
 
 /* ------------------------------------------------------------------ main loop */
 let last = performance.now(), fpsT = 0, fpsN = 0;
@@ -665,7 +893,7 @@ function frame(now) {
   const P = G.player;
   if (!P) return;
   if (G.state === 'play' || G.state === 'over') {
-    const k = G.state === 'play' ? input.read() : { mx: 0, my: 0, lookX: 0, lookY: 0 };
+    const k = G.state === 'play' || G.spectate ? input.read() : { mx: 0, my: 0, lookX: 0, lookY: 0 };
     const sens = 0.0024 * S.sens * (G.aimK > 0.5 ? (gun() && gun().def.scope ? 0.25 : 0.6) : 1);
     G.yaw -= k.lookX * sens; G.pitch = clamp(G.pitch - k.lookY * sens, -1.3, 1.35);
     if (G.recoil > 0) { const r = Math.min(G.recoil, dt * (k.fire ? 0.06 : 0.35) + G.recoil * dt * 4); G.pitch -= r * 0.8; G.recoil -= r; }
@@ -708,7 +936,7 @@ function frame(now) {
       if (G.heal) { G.heal.t += dt; if (G.heal.t >= G.heal.dur) finishHeal(); }
       updatePickup(dt);
     }
-    if (G.state === 'play') input.endFrame();
+    if (G.state === 'play' || G.spectate) input.endFrame();
     P.animate(dt, aiming);
     updateCamera(rdt, aiming);
     // the zone hurts anyone outside it
@@ -722,6 +950,7 @@ function frame(now) {
     }
     G.grenades.update(dt, explode);
     updateBots(dt);
+    if (G.online) updateRemotes(dt);
     // training targets fall when hit and stand up again
     for (const t of G.targets) {
       if (!t.alive) { t.respawnT -= dt; if (t.respawnT <= 0) { t.revive(); t.yaw = Math.random() * Math.PI * 2; } }
@@ -732,7 +961,10 @@ function frame(now) {
     if (G.state === 'play') {
       updateHUD(rdt);
       // end of the match
-      if (G.mode === 'battle') {
+      if (G.mode === 'online') {
+        if (!P.alive) endMatch(false);
+        else if (G.enemies.every((e) => !e.alive)) endMatch(true);
+      } else if (G.mode === 'battle') {
         if (!P.alive) endMatch(false);
         else if (G.enemies.length ? G.enemies.every((e) => !e.alive) : G.zone.stage >= STAGES.length - 1) endMatch(true);
       } else if (!P.alive) { P.revive(); P.pos.set(13, G.world.heightAt(13, 13) + 0.1, 13); feed('Back on your feet.'); }
@@ -757,8 +989,28 @@ $('pauseBtn').onclick = () => (G.state === 'paused' ? resume() : pause());
 $('p-resume').onclick = resume;
 $('p-menu').onclick = showMenu;
 $('p-sound').onclick = () => { audio.init(); audio.toggle(); $('p-sound').textContent = 'SOUND: ' + (audio.on ? 'ON' : 'OFF'); };
-$('o-again').onclick = () => startMatch(G.mode);
-$('o-menu').onclick = showMenu;
+$('o-again').onclick = () => { if (G.online) hostStart(); else startMatch(G.mode); };
+$('o-menu').onclick = () => { if (G.online) leaveRoom(); else showMenu(); };
+$('o-spec').onclick = spectateNext;
+$('spec-next').onclick = spectateNext;
+$('spec-results').onclick = () => { G.spectate = null; $('specbar').classList.add('hidden'); $('over').classList.remove('hidden'); };
+$('online').onclick = () => openOnline();
+$('m-name').addEventListener('change', () => { S.name = cleanName($('m-name').value); save(); });
+$('lb-create').onclick = createRoom;
+$('lb-joinbtn').onclick = joinRoom;
+$('lb-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') joinRoom(); });
+$('lb-code').addEventListener('input', (e) => { e.target.value = cleanCode(e.target.value); });
+$('lb-start').onclick = hostStart;
+$('lb-close').onclick = () => $('lobby').classList.add('hidden');
+$('lb-leave').onclick = leaveRoom;
+$('lb-copy').onclick = async () => {
+  if (!room) return;
+  const link = location.origin + location.pathname + '?room=' + room.code;
+  try { await navigator.clipboard.writeText(link); $('lb-copy').textContent = 'COPIED!'; }
+  catch (_) { prompt('Copy this link and send it to your friends:', link); }
+  setTimeout(() => ($('lb-copy').textContent = 'COPY INVITE LINK'), 1600);
+};
+addEventListener('beforeunload', () => { if (room) room.leave(); });
 $('mapBtn').onclick = toggleMap;
 $('mapClose').onclick = () => $('bigmap').classList.add('hidden');
 $('airbtn').addEventListener('pointerdown', (e) => { e.stopPropagation(); if (G.player.air === 'plane') jump(); else openChute(); });
@@ -779,11 +1031,28 @@ setTimeout(() => {
   showMenu();
   drawItems();
   if (params.has('auto')) startMatch(params.get('auto') === 'training' ? 'training' : 'battle');
+  if (params.has('room')) openOnline(params.get('room'));
+  // testing aid: ?mp=host&name=A creates a room and starts when ?humans players are in; ?mp=join&room=CODE&name=B joins it
+  if (params.get('mp') === 'host' || params.get('mp') === 'join') {
+    openOnline(params.get('room'));
+    $('lb-name').value = params.get('name') || 'Tester';
+    if (params.get('mp') === 'host') {
+      createRoom().then(() => {
+        const want = +params.get('humans') || 2;
+        const iv = setInterval(() => { if (room && room.players.length >= want) { clearInterval(iv); setTimeout(hostStart, 800); } }, 300);
+      });
+    } else joinRoom();
+  }
   requestAnimationFrame(frame);
   // the realistic soldier model (same characters as Kadal Nagaram); the built-in one until it loads
   if (!params.has('simple')) {
     const files = Q === 'low' ? ['player.glb'] : ['player.glb', 'ped1.glb', 'ped2.glb', 'ped3.glb', 'thug.glb'];
     loadCharacters('../GTA-Game/models/', files, { 'player.glb': 1.78, 'ped1.glb': 1.72, 'ped2.glb': 1.75, 'ped3.glb': 1.73, 'thug.glb': 1.8 })
-      .then((lib) => { if (!lib) return; G.player.upgrade(); for (const b of G.bots) b.s.upgrade(); }).catch(() => {});
+      .then((lib) => {
+        if (!lib) return;
+        G.player.upgrade();
+        for (const b of G.bots) b.s.upgrade();
+        for (const r of G.remotes.values()) { r.s.upgrade(); if (!r.s.root.getObjectByName('tag')) r.s.root.add(nameTag(r.s.name)); }
+      }).catch(() => {});
   }
 }, 30);
