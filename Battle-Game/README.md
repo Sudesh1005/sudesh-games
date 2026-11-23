@@ -2,14 +2,14 @@
 
 A third-person island battle game in the browser: land on the island, find guns, fight, and be the last one standing. Built with plain HTML, CSS and JavaScript plus [three.js](https://threejs.org) from a CDN, with no build step. The island, buildings, guns and sounds are generated in code; the soldier uses the same character models as Kadal Nagaram (`../GTA-Game/models/`).
 
-## Status: step 2 of 5 (solo battle: drop, loot, zone)
+## Status: step 3 of 5 (battles against computer players)
 
 | Step | What | Status |
 |---|---|---|
 | 1 | Island, soldier, third-person camera, 2 guns, controls | done |
 | 2 | Loot, armour, med kits, 5 guns, shrinking zone, plane + parachute | done |
-| 3 | Computer players (single-player battles) | next |
-| 4 | Online with friends (2–6 players, last one standing wins) | |
+| 3 | Computer players (single-player battles) | done |
+| 4 | Online with friends (2–6 players, last one standing wins) | next |
 | 5 | Sound, effects, phone tuning, polish | |
 
 ## Battle (step 2)
@@ -18,7 +18,8 @@ A third-person island battle game in the browser: land on the island, find guns,
 2. **Free fall**: steer with the stick / WASD, push forward to dive faster. The **parachute** opens by itself about 95 m above the ground, or press **OPEN** (Space) earlier. Glide down and land on the ground or a roof.
 3. **Loot** lies in every building, on and around the camp's crates and in the open: guns, ammo, armour vests and helmets (level 1 and 2), bandages, med kits and grenades. Walk over ammo, meds, armour and grenades to take them; guns show a pick-up button (F). You carry 2 guns; picking up a third swaps it with the one in your hands. A second copy of a gun you already have just gives you its bullets.
 4. **The safe zone** shrinks in 6 stages (white circle = where it's going, blue = where it is now). Outside it you lose health every second, more in later stages. The zone timer and the distance to safety are under the minimap.
-5. **Result**: in this step you play alone, so surviving all the zones is a win; dying to the zone ends the match. Computer players come in step 3, friends online in step 4.
+5. **Computer players** (11 on Low graphics, 15 on Medium, 19 on High; Easy / Normal / Hard in the menu) ride the same plane and each jumps at its own moment, glides down next to a gun, loots what it needs (better guns, ammo for its guns, armour, meds), heads into the next safe zone in time, and fights anyone it sees or hears, you and each other: strafing, firing in bursts, reloading, switching guns, healing when it's quiet. When one dies, its guns, ammo and meds drop where it fell. Harder levels see further, react faster and aim better.
+6. **Result**: be the last one standing (**WINNER!**), or see who got you and your place (#N of M), your kills, damage and time survived. A red mark shows which side a hit came from.
 
 ### Guns
 
@@ -57,7 +58,7 @@ python -m http.server 8000
 # open http://localhost:8000/Battle-Game/
 ```
 
-Testing aids (URL options): `?auto` starts a battle (`?auto=training` the training ground), `?seed=7` fixes the loot, zone and plane route, `?speed=10` runs time faster, `?touch` shows phone controls, `?q=low|med|high` graphics, `?simple` skips the character model, `?cam=side|front` looks at the soldier from the side or front.
+Testing aids (URL options): `?auto` starts a battle (`?auto=training` the training ground), `?bots=5` sets how many computer players, `?level=hard`, `?god` makes you unhurtable, `?seed=7` fixes the loot, zone and plane route, `?speed=10` runs time faster, `?touch` shows phone controls, `?q=low|med|high` graphics, `?simple` skips the character model, `?cam=side|front` looks at the soldier from the side or front.
 
 ## Project layout
 
@@ -72,6 +73,8 @@ js/loot.js      loot table, item models, the bag, picking up
 js/zone.js      the shrinking safe zone
 js/drop.js      the plane route, plane and parachute models
 js/grenade.js   thrown grenades
+js/bots.js      computer players: drop, looting, zone, finding their way into buildings, fighting
+js/combat.js    bullet hits and damage (shared by everyone)
 js/fx.js        muzzle flashes, tracers, impact puffs
 js/input.js     keyboard, mouse and touch controls
 js/audio.js     synthesised sounds

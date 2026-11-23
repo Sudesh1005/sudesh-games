@@ -4,9 +4,11 @@ import * as THREE from 'three';
 import { World, AREAS, HALF, WATER_Y } from './world.js';
 import { Soldier } from './soldier.js';
 import { GUNS, AMMO } from './weapons.js';
-import { Inventory, Loot, itemName, HELMET_CUT, CAP } from './loot.js';
+import { Inventory, Loot, itemName } from './loot.js';
 import { Zone, STAGES } from './zone.js';
-import { planeRoute, makePlane, PLANE_Y, PLANE_SPEED } from './drop.js';
+import { planeRoute, makePlane, airStep, PLANE_Y, PLANE_SPEED } from './drop.js';
+import { Bot, BOT_NAMES, BOT_LEVELS } from './bots.js';
+import { castShot, bulletDamage } from './combat.js';
 import { Grenades, BLAST_R, BLAST_DMG } from './grenade.js';
 import { FX } from './fx.js';
 import { Input } from './input.js';
@@ -20,6 +22,7 @@ const params = new URLSearchParams(location.search);
 const isTouch = matchMedia('(pointer: coarse)').matches || params.has('touch');
 const DBG_CAM = params.get('cam'); // testing aid
 const TIME_SCALE = clamp(+params.get('speed') || 1, 0.1, 30); // testing aid
+const GOD = params.has('god'); // testing aid: the player can't be hurt
 document.body.classList.toggle('touch', isTouch);
 function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 const fmt = (s) => { s = Math.max(0, Math.ceil(s)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
@@ -29,9 +32,12 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (_) { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) { /* ignore */ } },
 };
-const S = Object.assign({ q: isTouch ? 'low' : 'med', sens: 1 }, store.get('battle-settings', {}));
+const S = Object.assign({ q: isTouch ? 'low' : 'med', sens: 1, level: 'normal' }, store.get('battle-settings', {}));
 if (params.has('q')) S.q = params.get('q');
 if (!['low', 'med', 'high'].includes(S.q)) S.q = 'med';
+if (params.has('level')) S.level = params.get('level');
+if (!BOT_LEVELS[S.level]) S.level = 'normal';
+const BOT_COUNT = params.has('bots') ? +params.get('bots') : S.q === 'low' ? 11 : S.q === 'med' ? 15 : 19;
 const save = () => store.set('battle-settings', S);
 const Q = S.q;
 
@@ -61,7 +67,7 @@ const audio = new BattleAudio();
 const input = new Input($('game'), isTouch);
 const fx = new FX(scene);
 const G = {
-  state: 'boot', mode: 'battle', world: null, player: null, inv: new Inventory(), yaw: 0, pitch: 0, targets: [], enemies: [],
+  state: 'boot', mode: 'battle', world: null, player: null, inv: new Inventory(), yaw: 0, pitch: 0, targets: [], enemies: [], bots: [], killer: null,
   camPos: new THREE.Vector3(), aimK: 0, stepT: 0, area: '', areaT: 0, kills: 0, shots: 0, hits: 0, dmgDealt: 0,
   loot: null, zone: null, plane: null, route: null, planeT: 0, grenades: null, heal: null, matchT: 0, overT: 0, pickT: 0, zoneTickT: 0, shake: 0,
 };
@@ -98,7 +104,8 @@ function clearMatch() {
   if (G.zone) { G.zone.dispose(); G.zone = null; }
   if (G.plane) { scene.remove(G.plane); G.plane = null; }
   for (const t of G.targets) scene.remove(t.root);
-  G.targets = []; G.enemies = [];
+  for (const b of G.bots) scene.remove(b.s.root);
+  G.targets = []; G.enemies = []; G.bots = []; G.killer = null;
   G.grenades.clear();
   G.heal = null;
 }
@@ -133,6 +140,14 @@ function startMatch(mode) {
     G.plane = makePlane(); scene.add(G.plane);
     G.planeT = 0;
     P.air = 'plane';
+    // the computer players, each with its own jump point along the route
+    const names = BOT_NAMES.slice().sort(() => R() - 0.5);
+    for (let i = 0; i < BOT_COUNT; i++) {
+      const b = new Bot(G.world, { name: names[i % names.length], level: S.level, rnd: rng(seed + 101 * (i + 1)), model: Q !== 'low', index: 1 + (i % 4), low: Q === 'low' });
+      b.s.addTo(scene); b.s.root.visible = false;
+      G.bots.push(b);
+    }
+    G.enemies = G.bots.map((b) => b.s);
     G.yaw = Math.atan2(G.route.dx, G.route.dz); G.pitch = -0.25;
     $('matchinfo').classList.remove('hidden');
   }
@@ -205,7 +220,7 @@ function fire() {
   const skip = scoped ? 0 : Math.max(0, _p.copy(P.pos).setY(P.eyeY()).sub(_o).dot(_d));
   _o.addScaledVector(_d, skip);
   _m.copy(scoped ? _o : P.muzzle);
-  let anyHit = false, head = false, kills = [];
+  let anyHit = false, head = false;
   const pellets = d.pellets || 1;
   for (let k = 0; k < pellets; k++) {
     camDir(_d);
@@ -213,10 +228,9 @@ function fire() {
     _r.crossVectors(_d, _up).normalize(); _u2.crossVectors(_r, _d);
     _d.addScaledVector(_r, Math.cos(a) * r).addScaledVector(_u2, Math.sin(a) * r).normalize();
     const o = [_o.x, _o.y, _o.z], dir = [_d.x, _d.y, _d.z];
-    let best = d.range, hitT = null, hitHead = false;
-    const wh = G.world.raycast(o, dir, d.range);
-    if (wh) best = wh.t;
-    for (const t of shootables()) { const h = t.rayHit(o, dir, best); if (h && h.t < best) { best = h.t; hitT = t; hitHead = h.head; } }
+    const shot = castShot(G.world, shootables(), o, dir, d.range, P);
+    let best = shot.t, hitT = shot.target, hitHead = shot.head;
+    const wh = shot.wall;
     const end = new THREE.Vector3(o[0] + dir[0] * best, o[1] + dir[1] * best, o[2] + dir[2] * best);
     // anything right in front of the muzzle blocks the shot
     let block = null;
@@ -227,14 +241,10 @@ function fire() {
     }
     if (k < 3) fx.tracer(_m, end);
     if (hitT) {
-      // damage drops off past half the gun's range; helmets soak up part of a headshot
-      const fall = clamp(1.25 - best / d.range, 0.5, 1);
-      const mult = hitHead ? 1 + (d.head - 1) * (1 - HELMET_CUT[hitT.helm || 0]) : 1;
-      const dealt = hitT.damage(d.dmg * mult * fall);
+      const dealt = applyHit(P, hitT, bulletDamage(d, best, hitHead, hitT.helm), hitHead, d.name, true);
       G.dmgDealt += dealt; G.hits++;
       fx.puff(end, 0xa01818, 4, 0.22);
       anyHit = true; head = head || hitHead;
-      if (!hitT.alive && !kills.includes(hitT)) kills.push(hitT);
     } else if (wh || block) {
       const kind = block ? block.kind : wh.kind;
       if (k < 4) fx.puff(end, kind === 'water' ? 0xd8eef5 : kind === 'tree' ? 0x6b5434 : kind === 'wall' ? 0xc8c0b0 : 0x9a8462, 4, kind === 'water' ? 0.5 : 0.3);
@@ -247,13 +257,26 @@ function fire() {
   G.pitch = clamp(G.pitch + kick, -1.3, 1.35); G.recoil = (G.recoil || 0) + kick;
   G.yaw += (Math.random() - 0.5) * d.recoil * 0.6;
   if (anyHit) hitMarker(head);
-  for (const t of kills) killed(t, 'You', d.name, head);
   drawSlots();
 }
-function killed(t, by, how, head) {
-  if (by === 'You') G.kills++;
-  feed(`<b>${by}</b> ➜ ${t.name || 'enemy'} <em>${head ? 'headshot' : how}</em>`);
-  if (G.mode === 'training') t.respawnT = 4;
+// One hit on a soldier from someone (the player, a computer player, or null for the zone).
+// silent = the hit marker is handled by the caller. Returns the damage done.
+function applyHit(from, target, dmg, head, how, silent) {
+  if (!target.alive || (GOD && target === G.player)) return 0;
+  const dealt = target.damage(dmg);
+  if (target === G.player) hurt(from);
+  else if (target.bot) target.bot.onHurt(from);
+  if (!target.alive) died(target, from, how, head);
+  if (from === G.player && !silent) hitMarker(head);
+  return dealt;
+}
+function died(t, from, how, head) {
+  const by = from === G.player ? 'You' : from ? from.name : 'The zone';
+  if (from === G.player) G.kills++;
+  feed(`<b>${by}</b> ➜ ${t === G.player ? 'You' : t.name || 'target'} <em>${head ? 'headshot' : how}</em>`);
+  if (G.mode === 'training' && t !== G.player) t.respawnT = 4;
+  if (t.bot) { t.bot.dropLoot(G.loot); t.deadT = 0; }
+  if (t === G.player) G.killer = by;
 }
 
 let hitTimer = 0;
@@ -304,12 +327,19 @@ function explode(p, owner) {
     const dir = c.clone().sub(p).normalize();
     const wall = G.world.raycast([p.x, p.y + 0.1, p.z], [dir.x, dir.y, dir.z], d);
     if (wall && wall.kind === 'wall') continue;
-    const dealt = s.damage(BLAST_DMG * (1 - d / BLAST_R));
-    if (s === G.player) { hurt(); continue; }
-    if (owner === 'You') { G.dmgDealt += dealt; hitMarker(false); if (!s.alive) killed(s, 'You', 'grenade', false); }
+    const from = owner === 'You' ? G.player : null;
+    const dealt = applyHit(from, s, BLAST_DMG * (1 - d / BLAST_R), false, 'grenade');
+    if (from === G.player && s !== G.player) G.dmgDealt += dealt;
   }
 }
-function hurt() { $('dmg').style.opacity = 1; G.hurtT = 0.4; audio.hurt(); }
+function hurt(from) {
+  $('dmg').style.opacity = 1; G.hurtT = 0.4; audio.hurt();
+  // a red mark on the side the shot came from
+  if (from && from !== G.player) {
+    const a = Math.atan2(from.pos.x - G.player.pos.x, from.pos.z - G.player.pos.z) - G.yaw;
+    const el = $('hitdir'); el.style.transform = `translate(-50%, -50%) rotate(${-a}rad)`; el.classList.add('show'); G.hitdirT = 1.2;
+  }
+}
 
 /* ------------------------------------------------------------------ picking things up */
 function updatePickup(dt) {
@@ -364,38 +394,51 @@ function openChute() {
   if (P.air !== 'fall') return;
   P.air = 'chute'; P.setChute(true); audio.chute();
 }
+function botShot(bot, from, to, def) {
+  // sound for everyone in earshot; a tracer when it's near the player
+  const P = G.player, d = Math.hypot(from[0] - P.pos.x, from[2] - P.pos.z);
+  if (d < 280) audio.far(def.sound === 'pistol' || def.sound === 'smg' ? 'pistol' : 'rifle', d);
+  if (d < 150 && bot.s.root.visible) {
+    fx.tracer(bot.s.muzzle.clone(), new THREE.Vector3(...to));
+    fx.flash(bot.s.muzzle, 0.45);
+  }
+}
+function botHit(bot, target, dmg, head, def) {
+  applyHit(bot.s, target, dmg, head, def.name);
+  if (target === G.player) return;
+  const P = G.player;
+  if (Math.hypot(target.pos.x - P.pos.x, target.pos.z - P.pos.z) < 150) fx.puff(new THREE.Vector3(target.pos.x, target.pos.y + 1.2, target.pos.z), 0xa01818, 3, 0.22);
+}
+function updateBots(dt) {
+  if (!G.bots.length) return;
+  const P = G.player;
+  const ctx = {
+    soldiers: [P].concat(G.enemies), loot: G.loot, zone: G.zone, route: G.route,
+    planeFrac: G.plane ? (G.planeT * PLANE_SPEED) / G.route.len : 2, planeAt: (f, out) => planePos((f * G.route.len) / PLANE_SPEED, out),
+    onShot: botShot, onHit: botHit,
+  };
+  const far = FOG + 30;
+  for (const b of G.bots) {
+    const s = b.s;
+    b.update(dt, ctx);
+    // the zone hurts them too
+    if (s.alive && !s.air && G.zone && !G.zone.inside(s.pos.x, s.pos.z)) {
+      s.health -= G.zone.dps * dt;
+      if (s.health <= 0) { s.health = 0; s.alive = false; s.dieT = 0; died(s, null, 'zone', false); }
+    }
+    // draw only the ones that can be seen
+    const d = Math.hypot(s.pos.x - camera.position.x, s.pos.z - camera.position.z);
+    const show = s.air !== 'plane' && d < far && (s.alive || (s.deadT = (s.deadT || 0) + dt) < 30);
+    if (show) { s.animate(dt, !!b.target); s.root.visible = true; } else s.root.visible = false;
+  }
+}
+
+
 function airMove(dt, k) {
-  const P = G.player, v = P.vel;
-  const fx_ = Math.sin(G.yaw), fz_ = Math.cos(G.yaw), rx = -fz_, rz = fx_;
-  const ground = Math.max(G.world.groundBelow(P.pos.x, P.pos.z, P.pos.y), WATER_Y - 1.2);
-  let tx, tz, ty;
-  if (P.air === 'fall') {
-    G.fallT += dt;
-    const fwd = 6 + Math.max(0, k.my) * 22 - Math.max(0, -k.my) * 4;
-    tx = fx_ * fwd + rx * k.mx * 14; tz = fz_ * fwd + rz * k.mx * 14;
-    ty = -36 - Math.max(0, k.my) * 14;
-    const kk = Math.min(1, dt * 1.2);
-    v.x += (tx - v.x) * kk; v.z += (tz - v.z) * kk; v.y += (ty - v.y) * Math.min(1, dt * 1.6);
-    if (P.pos.y - ground < 95 && G.fallT > 1.5) openChute();
-  } else {
-    const fwd = 4.5 + k.my * 6;
-    tx = fx_ * fwd + rx * k.mx * 6; tz = fz_ * fwd + rz * k.mx * 6;
-    ty = k.my < -0.3 ? -4 : -6.2;
-    const kk = Math.min(1, dt * 2);
-    v.x += (tx - v.x) * kk; v.z += (tz - v.z) * kk; v.y += (ty - v.y) * kk;
-  }
-  P.pos.addScaledVector(v, dt);
-  const lim = HALF - 30;
-  P.pos.x = clamp(P.pos.x, -lim, lim); P.pos.z = clamp(P.pos.z, -lim, lim);
-  const g2 = Math.max(G.world.groundBelow(P.pos.x, P.pos.z, P.pos.y + 0.5), WATER_Y - 1.2);
-  if (P.pos.y <= g2) {
-    // landed
-    P.pos.y = g2; v.set(0, 0, 0); P.air = null; P.setChute(false); P.onGround = true;
-    audio.land();
-    if (!gun()) feed('Find a gun! Search the buildings.');
-  }
-  P.yaw = G.yaw;
-  P.moveSpeed = 0;
+  const P = G.player;
+  const r = airStep(G.world, P, dt, G.yaw, k.mx, k.my);
+  if (r === 'opened') audio.chute();
+  if (r === 'landed') { audio.land(); if (!gun()) feed('Find a gun! Search the buildings.'); }
 }
 
 /* ------------------------------------------------------------------ camera */
@@ -520,6 +563,7 @@ function updateHUD(dt) {
   if (hitTimer > 0) { hitTimer -= dt; if (hitTimer <= 0) $('hitm').classList.remove('show'); }
   if (toastT > 0) { toastT -= dt; if (toastT <= 0) $('toast').classList.remove('show'); }
   if (G.hurtT > 0) { G.hurtT -= dt; if (G.hurtT <= 0) $('dmg').style.opacity = 0; }
+  if (G.hitdirT > 0) { G.hitdirT -= dt; if (G.hitdirT <= 0) $('hitdir').classList.remove('show'); }
   // healing bar
   $('healbar').classList.toggle('on', !!G.heal);
   if (G.heal) { $('healbar').querySelector('i').style.width = ((G.heal.t / G.heal.dur) * 100).toFixed(0) + '%'; $('healbar').querySelector('span').textContent = G.heal.kind === 'medkit' ? 'Using med kit…' : 'Bandaging…'; }
@@ -560,7 +604,7 @@ function endMatch(won) {
   const alive = 1 + G.enemies.filter((e) => e.alive).length, total = 1 + G.enemies.length;
   $('o-title').textContent = won ? 'WINNER!' : 'YOU DIED';
   $('o-sub').textContent = won ? (G.enemies.length ? 'Last one standing on the island.' : 'You survived every zone. Computer players join in the next update.')
-    : G.enemies.length ? `Placed #${alive} of ${total}.` : 'The zone got you. Stay inside the white circle on the map.';
+    : G.enemies.length ? `${G.killer && G.killer !== 'The zone' ? 'Killed by ' + G.killer : 'The zone got you'}. Placed #${alive} of ${total}.` : 'The zone got you. Stay inside the white circle on the map.';
   const stat = (l, v) => `<div><span>${l}</span><b>${v}</b></div>`;
   $('o-stats').innerHTML = stat('Rank', `#${won ? 1 : alive}`) + stat('Kills', G.kills) + stat('Damage', Math.round(G.dmgDealt)) + stat('Survived', fmt(G.matchT));
   setTimeout(() => $('over').classList.remove('hidden'), won ? 1200 : 2200);
@@ -576,6 +620,10 @@ function showMenu() {
   $('menu').classList.remove('hidden'); $('hud').classList.add('hidden'); $('pause').classList.add('hidden'); $('over').classList.add('hidden'); $('clickplay').classList.add('hidden');
   document.body.classList.remove('playing', 'air');
   $('m-sens').value = S.sens;
+  $('m-lvl').querySelectorAll('button').forEach((b) => {
+    b.classList.toggle('on', b.dataset.v === S.level);
+    b.onclick = () => { S.level = b.dataset.v; save(); showMenu(); };
+  });
   $('m-q').querySelectorAll('button').forEach((b) => {
     b.classList.toggle('on', b.dataset.v === S.q);
     b.onclick = () => { if (S.q === b.dataset.v) return; S.q = b.dataset.v; save(); location.reload(); };
@@ -623,16 +671,19 @@ function frame(now) {
     if (G.recoil > 0) { const r = Math.min(G.recoil, dt * (k.fire ? 0.06 : 0.35) + G.recoil * dt * 4); G.pitch -= r * 0.8; G.recoil -= r; }
     G.matchT += P.alive && G.state === 'play' ? dt : 0;
     let aiming = false;
-    if (P.air === 'plane') {
+    // the plane flies on whatever the player is doing (the computer players jump from it)
+    if (G.plane) {
       G.planeT += dt;
       planePos(G.planeT, _p);
       G.plane.position.copy(_p); G.plane.rotation.y = Math.atan2(G.route.dx, G.route.dz);
       for (const pr of G.plane.userData.props) pr.rotation.z += dt * 40;
-      P.pos.copy(_p);
+      if (G.planeT * PLANE_SPEED > G.route.len + 200 && P.air !== 'plane') { scene.remove(G.plane); G.plane = null; }
+    }
+    if (P.air === 'plane') {
+      planePos(G.planeT, P.pos);
       if (G.planeT * PLANE_SPEED > G.route.len - 40) { jump(); feed('You were dropped at the end of the route.'); }
     } else if (P.air) {
       airMove(dt, k);
-      if (G.plane) { G.planeT += dt; planePos(G.planeT, _p); G.plane.position.copy(_p); if (G.planeT * PLANE_SPEED > G.route.len + 200) { scene.remove(G.plane); G.plane = null; } }
     } else if (P.alive && G.state === 'play') {
       const fx_ = Math.sin(G.yaw), fz_ = Math.cos(G.yaw), rx = -fz_, rz = fx_;
       const wx = fx_ * k.my + rx * k.mx, wz = fz_ * k.my + rz * k.mx;
@@ -663,13 +714,14 @@ function frame(now) {
     // the zone hurts anyone outside it
     if (G.zone) {
       G.zone.update(dt);
-      if (P.alive && !P.air && !G.zone.inside(P.pos.x, P.pos.z)) {
+      if (P.alive && !P.air && !GOD && !G.zone.inside(P.pos.x, P.pos.z)) {
         P.health = Math.max(0, P.health - G.zone.dps * dt);
         G.zoneTickT -= dt; if (G.zoneTickT <= 0) { G.zoneTickT = 1; audio.zoneTick(); $('dmg').style.opacity = 0.5; G.hurtT = 0.3; }
-        if (P.health <= 0) { P.alive = false; P.dieT = 0; feed('<b>The zone</b> ➜ You'); }
+        if (P.health <= 0) { P.alive = false; P.dieT = 0; died(P, null, 'zone', false); }
       }
     }
     G.grenades.update(dt, explode);
+    updateBots(dt);
     // training targets fall when hit and stand up again
     for (const t of G.targets) {
       if (!t.alive) { t.respawnT -= dt; if (t.respawnT <= 0) { t.revive(); t.yaw = Math.random() * Math.PI * 2; } }
@@ -730,6 +782,8 @@ setTimeout(() => {
   requestAnimationFrame(frame);
   // the realistic soldier model (same characters as Kadal Nagaram); the built-in one until it loads
   if (!params.has('simple')) {
-    loadCharacters('../GTA-Game/models/', ['player.glb'], { 'player.glb': 1.78 }).then((lib) => { if (lib) G.player.upgrade(); }).catch(() => {});
+    const files = Q === 'low' ? ['player.glb'] : ['player.glb', 'ped1.glb', 'ped2.glb', 'ped3.glb', 'thug.glb'];
+    loadCharacters('../GTA-Game/models/', files, { 'player.glb': 1.78, 'ped1.glb': 1.72, 'ped2.glb': 1.75, 'ped3.glb': 1.73, 'thug.glb': 1.8 })
+      .then((lib) => { if (!lib) return; G.player.upgrade(); for (const b of G.bots) b.s.upgrade(); }).catch(() => {});
   }
 }, 30);

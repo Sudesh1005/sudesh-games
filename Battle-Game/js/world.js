@@ -119,6 +119,7 @@ export class World {
     this.group = new THREE.Group();
     this.spawns = [];
     this.lootSpots = [];   // [x, y, z]: floors inside buildings, around the camp, in the open
+    this.houses = [];      // footprints with their door and stairs, for the computer players to find their way in
     this.targets = [];
   }
 
@@ -142,6 +143,12 @@ export class World {
     this.circles.push(c); this.grid.add(c, x - r, z - r, x + r, z + r);
   }
   near(minx, minz, maxx, maxz) { return this.grid.query(minx, minz, maxx, maxz, [], ++this.stamp); }
+
+  // the building whose footprint contains (x, z), if any
+  houseAt(x, z) {
+    for (const h of this.houses) if (x > h.x0 && x < h.x1 && z > h.z0 && z < h.z1) return h;
+    return null;
+  }
 
   // The highest floor under (x, z) that is not above y (terrain, floors, roofs, steps).
   groundBelow(x, z, y, r = 0.3) {
@@ -351,6 +358,11 @@ export class World {
       }
       // a few spots inside and around to start from, and places where loot lies
       this.spawns.push([cx, base + 0.05, cz]);
+      {
+        const side = rot % 4, dc = side % 2 ? cz : cx;
+        const door = side === 0 ? [[dc, z1 + 1.6], [dc, z1 - 1.2]] : side === 1 ? [[x1 + 1.6, dc], [x1 - 1.2, dc]] : side === 2 ? [[dc, z0 - 1.6], [dc, z0 + 1.2]] : [[x0 - 1.6, dc], [x0 + 1.2, dc]];
+        this.houses.push({ x0, x1, z0, z1, y: base, floors, door, stairs: floors > 1 ? [[x0 + 0.75, z1 - 0.7], [x0 + 0.75, z1 - 1.0 - 12 * 0.3 - 0.6]] : null });
+      }
       for (let f = 0; f < floors; f++) {
         const fy = base + f * H + 0.02, xa = f ? x0 + 1.9 : x0 + 0.7;
         for (let n = 0; n < 2; n++) this.lootSpots.push([xa + R() * (x1 - 0.7 - xa), fy, z0 + 0.7 + R() * (z1 - z0 - 1.4)]);

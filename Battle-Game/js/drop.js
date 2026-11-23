@@ -1,6 +1,39 @@
 // Theevu Yudham: the drop. A cargo plane crosses the island; players jump, free-fall and open a parachute.
 import * as THREE from 'three';
-import { ISLAND_R } from './world.js';
+import { ISLAND_R, HALF, WATER_Y } from './world.js';
+
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+
+// One step of free fall or parachute gliding for any soldier. yaw = where they face, (mx, my) = stick.
+// The parachute opens by itself at s.chuteAlt metres (95 unless set). Returns 'opened', 'landed' or null.
+export function airStep(world, s, dt, yaw, mx, my) {
+  const v = s.vel, p = s.pos;
+  const fx = Math.sin(yaw), fz = Math.cos(yaw), rx = -fz, rz = fx;
+  let out = null;
+  if (s.air === 'fall') {
+    s.fallT = (s.fallT || 0) + dt;
+    const fwd = 6 + Math.max(0, my) * 22 - Math.max(0, -my) * 4;
+    const kk = Math.min(1, dt * 1.2);
+    v.x += (fx * fwd + rx * mx * 14 - v.x) * kk; v.z += (fz * fwd + rz * mx * 14 - v.z) * kk;
+    v.y += (-36 - Math.max(0, my) * 14 - v.y) * Math.min(1, dt * 1.6);
+    const ground = Math.max(world.groundBelow(p.x, p.z, p.y), WATER_Y - 1.2);
+    if (p.y - ground < (s.chuteAlt || 95) && s.fallT > 1.5) { s.air = 'chute'; s.setChute(true); out = 'opened'; }
+  } else {
+    const fwd = 4.5 + my * 6, kk = Math.min(1, dt * 2);
+    v.x += (fx * fwd + rx * mx * 6 - v.x) * kk; v.z += (fz * fwd + rz * mx * 6 - v.z) * kk;
+    v.y += ((my < -0.3 ? -4 : -6.2) - v.y) * kk;
+  }
+  p.addScaledVector(v, dt);
+  const lim = HALF - 30;
+  p.x = clamp(p.x, -lim, lim); p.z = clamp(p.z, -lim, lim);
+  const g2 = Math.max(world.groundBelow(p.x, p.z, p.y + 0.5), WATER_Y - 1.2);
+  if (p.y <= g2) {
+    p.y = g2; v.set(0, 0, 0); s.air = null; s.setChute(false); s.onGround = true;
+    out = 'landed';
+  }
+  s.yaw = yaw; s.moveSpeed = 0;
+  return out;
+}
 
 export const PLANE_Y = 170, PLANE_SPEED = 52;
 

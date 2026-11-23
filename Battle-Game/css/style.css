@@ -199,3 +199,7 @@ body.touch #feed div:nth-child(n+4) { display: none; }
   #healbar { bottom: 104px; }
   #airbtn { width: 100px; height: 100px; bottom: 80px; }
 }
+
+/* where a hit came from */
+#hitdir { position: absolute; left: 50%; top: 50%; width: 240px; height: 240px; transform: translate(-50%, -50%); opacity: 0; transition: opacity 0.5s; border-radius: 50%; border-top: 6px solid rgba(255, 50, 40, 0.9); -webkit-mask: linear-gradient(#000 0 25%, transparent 45%); mask: linear-gradient(#000 0 25%, transparent 45%); }
+#hitdir.show { opacity: 1; transition: none; }
