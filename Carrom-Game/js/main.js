@@ -318,9 +318,10 @@ function drawAim(a, dim) {
   if (!a) { B.aim.visible = false; return; }
   B.aim.visible = true;
   const guide = S.guide || G.state !== 'aim';
-  // the arrow covers the first part; a short dotted line carries on from its tip (not across the whole board)
+  // only a hint of direction: the arrow and a few dots past its tip. Nothing shows where coins will go,
+  // so players still have to judge their own cuts.
   const pw = a.power, arrowLen = 0.035 + pw * 0.15, tip = P.STRIKER_R + 0.006 + arrowLen + 0.03;
-  let x = st.x, z = st.z, dx = a.dx, dz = a.dz, n = 0, left = guide ? tip + 0.14 : tip, hitCoin = null, gx = 0, gz = 0, went = 0;
+  let x = st.x, z = st.z, dx = a.dx, dz = a.dz, n = 0, left = guide ? tip + 0.04 : tip, went = 0;
   const lim = P.H - P.STRIKER_R;
   for (let bounce = 0; bounce < 2 && left > 0; bounce++) {
     let best = left, coin = null;
@@ -339,20 +340,14 @@ function drawAim(a, dim) {
     const seg = Math.min(best, wall);
     for (let s = 0.014; s < seg && n < B.dots.length; s += 0.014) { if (went + s < tip) continue; const d = B.dots[n++]; d.visible = true; d.position.x = x + dx * s; d.position.z = z + dz * s; }
     went += seg;
-    if (coin && best <= wall) { gx = x + dx * best; gz = z + dz * best; hitCoin = coin; break; }
+    if (coin && best <= wall) break;
     x += dx * seg; z += dz * seg; left -= seg;
     if (seg === wall) { if (Math.abs(x) >= lim - 1e-6) nx = -dx; if (Math.abs(z) >= lim - 1e-6) nz = -dz; dx = nx; dz = nz; }
     if (!guide) break;
   }
   for (let i = n; i < B.dots.length; i++) B.dots[i].visible = false;
-  let m = 0;
-  if (hitCoin && guide) {
-    B.ghost.visible = true; B.ghost.position.x = gx; B.ghost.position.z = gz;
-    let cx = hitCoin.x - gx, cz = hitCoin.z - gz; const cl = Math.hypot(cx, cz); cx /= cl; cz /= cl;
-    const L = 0.04 + a.power * 0.08;
-    for (let s = 0.012; s < L && m < B.dots2.length; s += 0.012) { const d = B.dots2[m++]; d.visible = true; d.position.x = hitCoin.x + cx * s; d.position.z = hitCoin.z + cz * s; }
-  } else B.ghost.visible = false;
-  for (let i = m; i < B.dots2.length; i++) B.dots2[i].visible = false;
+  B.ghost.visible = false;
+  for (const d of B.dots2) d.visible = false;
   // direction arrow out of the striker: longer and redder the harder the shot
   B.arrow.position.x = st.x + a.dx * (P.STRIKER_R + 0.006); B.arrow.position.z = st.z + a.dz * (P.STRIKER_R + 0.006);
   B.arrow.rotation.y = Math.atan2(-a.dx, -a.dz);

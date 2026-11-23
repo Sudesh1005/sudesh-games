@@ -10,7 +10,7 @@ A 3D carrom game in the browser: a real-proportion board (74 cm playing surface,
 
 ## How to play
 
-- Place the striker on your base line with the slider (or drag along the line), then touch the board, **pull back and let go**. The further you pull, the harder the shot. The dotted guide shows the striker's path, where it touches the first coin and where that coin goes (switch it off with GUIDE for a real challenge).
+- Place the striker on your base line with the slider (or drag along the line), then touch the board, **pull back and let go**. The further you pull, the harder the shot. An arrow from the striker shows the direction (it grows and turns from green to red with the power), with a few dots past its tip (GUIDE switches the dots off). Where the coins go after the hit is up to you to judge.
 - The first player plays **white**, the other side **black**. With 4 players, partners sit opposite each other and play as a team.
 - Pocket one of your coins and you shoot again.
 - **Queen**: pocket the red queen, then **cover** her by pocketing one of your own coins in the same shot or the next one, or she goes back to the centre. She must be covered before a side's last coin goes in.
