@@ -25,16 +25,32 @@
     <div id="cross"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><b></b></div>
     <div id="hitm"></div>
     <div id="dmg"></div>
+    <div id="outzone"></div>
+    <div id="scope"><i></i></div>
     <div id="compass"><div id="compass-strip"></div><i></i></div>
     <div id="area"></div>
     <div id="feed"></div>
     <div id="toast"></div>
     <div id="minimap"><canvas id="mini" width="300" height="300"></canvas><span id="coords"></span></div>
+    <div id="matchinfo">
+      <div id="alivebox"><span>ALIVE</span><b id="alive">1</b><span>KILLS</span><b id="kills">0</b></div>
+      <div id="zoneinfo"><b id="zt">0:00</b><span id="zmsg"></span><em id="zdist"></em></div>
+    </div>
+    <div id="pick"></div>
+    <div id="items">
+      <button id="useBand" aria-label="Use bandage"><i class="ic band"></i><b>0</b></button>
+      <button id="useKit" aria-label="Use med kit"><i class="ic kit"></i><b>0</b></button>
+      <button id="useNade" aria-label="Throw grenade"><i class="ic nade"></i><b>0</b></button>
+    </div>
+    <div id="healbar"><i></i><span>Healing…</span></div>
+    <button id="airbtn">JUMP</button>
+    <div id="altitude"></div>
     <div id="tools">
       <button id="mapBtn" aria-label="Map">MAP</button>
       <button id="pauseBtn" aria-label="Pause">II</button>
     </div>
     <div id="vitals">
+      <div id="gear"><span id="vestlv">VEST —</span><span id="helmlv">HELMET —</span></div>
       <div class="bar armor"><i id="armorbar"></i></div>
       <div class="bar hp"><i id="hpbar"></i><span id="hptext">100</span></div>
     </div>
@@ -69,8 +85,9 @@
     <div class="card menu">
       <div class="logo"><span class="l1">THEEVU</span><span class="l2">YUDHAM</span></div>
       <p class="tag">Island battle. Land, find guns, fight, and be the last one standing.</p>
-      <button id="start" class="primary">TRAINING GROUND</button>
-      <p class="note">This first version is a training ground: run around the island, go into the buildings and practise on the targets. Matches against the computer and online with friends come next.</p>
+      <button id="start" class="primary">BATTLE (SOLO)</button>
+      <button id="training">TRAINING GROUND</button>
+      <p class="note">Battle: jump from the plane, open your parachute, find guns, armour and med kits, and stay inside the safe zone until the end. Computer players and online matches with friends come in the next updates.</p>
       <div class="row2">
         <div><label class="lbl">Graphics</label><div class="seg" id="m-q"><button data-v="low">Low</button><button data-v="med">Medium</button><button data-v="high">High</button></div></div>
         <div><label class="lbl">Look speed</label><input id="m-sens" type="range" min="0.4" max="2.2" step="0.1"></div>
@@ -85,6 +102,9 @@
         <div><kbd>C</kbd><span>Crouch</span></div>
         <div><kbd>R</kbd><span>Reload</span></div>
         <div><kbd>1 2 Q</kbd><span>Switch gun</span></div>
+        <div><kbd>F</kbd><span>Pick up gun</span></div>
+        <div><kbd>4 5</kbd><span>Bandage / Med kit</span></div>
+        <div><kbd>G</kbd><span>Grenade</span></div>
         <div><kbd>M</kbd><span>Map</span></div>
         <div><kbd>Esc</kbd><span>Pause</span></div>
       </div>
@@ -99,6 +119,16 @@
       <button id="p-resume" class="primary">RESUME</button>
       <button id="p-sound">SOUND: ON</button>
       <button id="p-menu">QUIT TO MENU</button>
+    </div>
+  </div>
+
+  <div id="over" class="overlay hidden">
+    <div class="card">
+      <h2 id="o-title">WINNER!</h2>
+      <p id="o-sub" class="note"></p>
+      <div id="o-stats"></div>
+      <button id="o-again" class="primary">PLAY AGAIN</button>
+      <button id="o-menu">MENU</button>
     </div>
   </div>
 

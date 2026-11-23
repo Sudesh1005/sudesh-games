@@ -1,9 +1,13 @@
-// Theevu Yudham: menu, third-person camera, shooting, training targets, HUD, minimap and the main loop.
-// Step 1 of the game: the island, the soldier, two guns and the controls (a training ground).
+// Theevu Yudham: menu, match flow (plane → free fall → parachute → loot → safe zone → result),
+// the training ground, third-person camera, shooting, healing, grenades, HUD, maps and the main loop.
 import * as THREE from 'three';
 import { World, AREAS, HALF, WATER_Y } from './world.js';
 import { Soldier } from './soldier.js';
-import { GUNS, Gun } from './weapons.js';
+import { GUNS, AMMO } from './weapons.js';
+import { Inventory, Loot, itemName, HELMET_CUT, CAP } from './loot.js';
+import { Zone, STAGES } from './zone.js';
+import { planeRoute, makePlane, PLANE_Y, PLANE_SPEED } from './drop.js';
+import { Grenades, BLAST_R, BLAST_DMG } from './grenade.js';
 import { FX } from './fx.js';
 import { Input } from './input.js';
 import { BattleAudio } from './audio.js';
@@ -15,7 +19,10 @@ const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const params = new URLSearchParams(location.search);
 const isTouch = matchMedia('(pointer: coarse)').matches || params.has('touch');
 const DBG_CAM = params.get('cam'); // testing aid
+const TIME_SCALE = clamp(+params.get('speed') || 1, 0.1, 30); // testing aid
 document.body.classList.toggle('touch', isTouch);
+function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const fmt = (s) => { s = Math.max(0, Math.ceil(s)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 
 /* ------------------------------------------------------------------ settings */
 const store = {
@@ -35,12 +42,11 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = Q !== 'low';
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.0;
 const scene = new THREE.Scene();
 const FOG = Q === 'low' ? 230 : Q === 'med' ? 380 : 520;
 scene.fog = new THREE.Fog(0xbcd3e2, FOG * 0.35, FOG);
 scene.background = new THREE.Color(0xbcd3e2);
-const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 2000);
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 2500);
 const hemi = new THREE.HemisphereLight(0xdfeeff, 0x6b6248, 0.9);
 const sun = new THREE.DirectionalLight(0xfff0d8, 2.2);
 const SUN = new THREE.Vector3(0.5, 0.8, 0.3).normalize();
@@ -55,30 +61,29 @@ const audio = new BattleAudio();
 const input = new Input($('game'), isTouch);
 const fx = new FX(scene);
 const G = {
-  state: 'boot', world: null, player: null, guns: [], cur: 0, yaw: 0, pitch: 0, targets: [],
-  camPos: new THREE.Vector3(), aimK: 0, hitT: 0, dmgT: 0, stepT: 0, area: '', areaT: 0, kills: 0, shots: 0, hits: 0,
+  state: 'boot', mode: 'battle', world: null, player: null, inv: new Inventory(), yaw: 0, pitch: 0, targets: [], enemies: [],
+  camPos: new THREE.Vector3(), aimK: 0, stepT: 0, area: '', areaT: 0, kills: 0, shots: 0, hits: 0, dmgDealt: 0,
+  loot: null, zone: null, plane: null, route: null, planeT: 0, grenades: null, heal: null, matchT: 0, overT: 0, pickT: 0, zoneTickT: 0, shake: 0,
 };
 window.__battle = G; G.input = input; G.camera = camera;
+const gun = () => G.inv.gun();
 
-/* ------------------------------------------------------------------ build the island */
+/* ------------------------------------------------------------------ build the island (once) */
 function buildWorld() {
   const w = new World(Q);
   scene.add(w.build(renderer));
   G.world = w;
-  // the player, in a street of Kovil Town
+  // a few loot spots out in the open too (near roads and in the fields)
+  const R = rng(99);
+  for (let i = 0; i < 70; i++) {
+    const x = (R() * 2 - 1) * 380, z = (R() * 2 - 1) * 380, y = w.heightAt(x, z);
+    if (y > 1.2 && freeSpot(x, z)) w.lootSpots.push([x, y + 0.02, z]);
+  }
   const p = new Soldier(w, { look: PLAYER_LOOK, model: 'player', low: Q === 'low' });
   p.addTo(scene);
-  const sx = 13, sz = 13;
-  p.pos.set(sx, w.heightAt(sx, sz) + 0.1, sz);
-  p.yaw = Math.PI; G.yaw = Math.PI;
   G.player = p;
-  G.guns = [new Gun(GUNS.ar), new Gun(GUNS.pistol)];
-  G.cur = 0; p.setGun('ar');
-  placeTargets();
-  drawSlots();
+  G.grenades = new Grenades(scene, w);
 }
-
-// training targets: people standing in the streets of the town and on the camp's range
 function freeSpot(x, z) {
   for (const b of G.world.near(x - 0.8, z - 0.8, x + 0.8, z + 0.8)) {
     if (b.circle) { if (Math.hypot(b.x - x, b.z - z) < b.r + 0.6) return false; continue; }
@@ -86,6 +91,62 @@ function freeSpot(x, z) {
   }
   return true;
 }
+
+/* ------------------------------------------------------------------ starting a match */
+function clearMatch() {
+  if (G.loot) G.loot.clear();
+  if (G.zone) { G.zone.dispose(); G.zone = null; }
+  if (G.plane) { scene.remove(G.plane); G.plane = null; }
+  for (const t of G.targets) scene.remove(t.root);
+  G.targets = []; G.enemies = [];
+  G.grenades.clear();
+  G.heal = null;
+}
+function resetPlayer() {
+  const P = G.player;
+  P.revive(); P.armor = 0; P.vest = 0; P.helm = 0; P.air = null; P.setChute(false); P.crouching = false;
+  P.vel.set(0, 0, 0);
+  G.inv = new Inventory();
+  G.kills = 0; G.shots = 0; G.hits = 0; G.dmgDealt = 0; G.matchT = 0; G.recoil = 0;
+}
+function startMatch(mode) {
+  audio.init();
+  clearMatch(); resetPlayer();
+  G.mode = mode;
+  const seed = params.has('seed') ? +params.get('seed') : (Math.random() * 1e9) | 0;
+  const R = rng(seed);
+  G.seed = seed;
+  G.loot = new Loot(scene, R);
+  G.loot.spawnAll(G.world.lootSpots);
+  const P = G.player;
+  if (mode === 'training') {
+    G.inv.give('ar', 30); G.inv.give('pistol', 12);
+    G.inv.cur = 0;
+    Object.assign(G.inv.ammo, { light: 200, rifle: 200, shell: 30, heavy: 30 });
+    G.inv.bandage = 5; G.inv.medkit = 2; G.inv.grenade = 4;
+    P.pos.set(13, G.world.heightAt(13, 13) + 0.1, 13); P.yaw = Math.PI; G.yaw = Math.PI; G.pitch = 0;
+    placeTargets();
+    $('matchinfo').classList.add('hidden');
+  } else {
+    G.zone = new Zone(scene, (x, z) => G.world.heightAt(x, z), R);
+    G.route = planeRoute(R);
+    G.plane = makePlane(); scene.add(G.plane);
+    G.planeT = 0;
+    P.air = 'plane';
+    G.yaw = Math.atan2(G.route.dx, G.route.dz); G.pitch = -0.25;
+    $('matchinfo').classList.remove('hidden');
+  }
+  P.setGun(gun() ? gun().def.id : null);
+  drawSlots();
+  G.state = 'play';
+  $('menu').classList.add('hidden'); $('over').classList.add('hidden'); $('hud').classList.remove('hidden');
+  document.body.classList.add('playing');
+  input.lock();
+  if (mode === 'training') { toast('TRAINING GROUND', 2.5); feed('Shoot the targets in the streets. Loot lies in every building.'); }
+  else { toast('GET READY TO JUMP', 2.5); feed(isTouch ? 'Tap JUMP when the plane is over a place you like.' : 'Press SPACE to jump when the plane is over a place you like.'); }
+}
+
+// training targets: people standing in the streets of the town and on the camp's range
 function placeTargets() {
   const w = G.world, spots = [];
   let tries = 0;
@@ -98,79 +159,101 @@ function placeTargets() {
   for (let k = 0; k < 6; k++) { const x = C.x - 30 + k * 12, z = C.z - 58; if (freeSpot(x, z)) spots.push([x, z]); }
   for (const [x, z] of spots) {
     const t = new Soldier(w, { look: randomLook(), low: true });
-    t.pos.set(x, w.heightAt(x, z), z); t.yaw = Math.random() * Math.PI * 2; t.home = [x, z]; t.respawnT = 0;
+    t.pos.set(x, w.heightAt(x, z), z); t.yaw = Math.random() * Math.PI * 2; t.respawnT = 0; t.name = 'target';
     t.addTo(scene); t.animate(0, false);
     G.targets.push(t);
   }
 }
 
 /* ------------------------------------------------------------------ guns */
-const gun = () => G.guns[G.cur];
 function switchGun(i) {
-  if (i === G.cur || !G.guns[i]) return;
-  G.guns[G.cur].reloading = 0;
-  G.cur = i; G.player.setGun(G.guns[i].def.id); gun().cool = 0.35;
+  const inv = G.inv;
+  if (i === inv.cur || !inv.guns[i]) return;
+  if (gun()) gun().reloading = 0;
+  inv.cur = i; G.player.setGun(gun().def.id); gun().cool = 0.35;
+  G.heal = null;
   audio.swap(); drawSlots();
 }
 function drawSlots() {
-  G.guns.forEach((g, i) => {
-    const el = $('slot' + i); if (!el) return;
-    el.querySelector('b').textContent = g.def.name; el.querySelector('span').textContent = `${g.ammo} / ${g.reserve}`;
-    el.classList.toggle('on', i === G.cur);
+  G.inv.guns.forEach((g, i) => {
+    const el = $('slot' + i);
+    el.querySelector('b').textContent = g ? g.def.name : 'EMPTY';
+    el.querySelector('span').textContent = g ? `${g.ammo} / ${g.reserve}` : 'find a gun';
+    el.classList.toggle('on', !!g && i === G.inv.cur);
   });
 }
 
-const _o = new THREE.Vector3(), _d = new THREE.Vector3(), _p = new THREE.Vector3(), _m = new THREE.Vector3();
+const _o = new THREE.Vector3(), _d = new THREE.Vector3(), _p = new THREE.Vector3(), _m = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0), _r = new THREE.Vector3(), _u2 = new THREE.Vector3();
 function camDir(out) { return out.set(Math.sin(G.yaw) * Math.cos(G.pitch), Math.sin(G.pitch), Math.cos(G.yaw) * Math.cos(G.pitch)); }
+const shootables = () => G.targets.concat(G.enemies);
 
 function fire() {
-  const g = gun(), d = g.def, P = G.player;
+  const g = gun(), P = G.player;
+  if (!g) return;
+  const d = g.def;
   if (g.cool > 0 || g.busy) return;
-  if (g.ammo <= 0) { audio.empty(); g.cool = 0.25; if (g.startReload()) audio.reload(g.def.reload); return; }
+  if (g.ammo <= 0) { audio.empty(); g.cool = 0.25; if (g.startReload()) audio.reload(d.reload); return; }
   g.ammo--; g.cool = d.rate; G.shots++;
-  // spread: tighter when aiming, wider when moving, grows while spraying
+  G.heal = null;
   const moving = P.moveSpeed > 1 ? 1 : 0;
-  const spread = (G.aimK > 0.5 ? d.aimSpread : d.spread) * (1 + moving * 0.8 + (P.onGround ? 0 : 1.5) - P.crouch * 0.3) + g.bloom;
+  const scoped = d.scope && G.aimK > 0.8;
+  const spread = (G.aimK > 0.5 ? d.aimSpread : d.spread) * (1 + moving * (scoped ? 4 : 0.8) + (P.onGround ? 0 : 1.5) - P.crouch * 0.3) + g.bloom;
   g.bloom = Math.min(0.022, g.bloom + d.recoil * 0.3);
-  camDir(_d);
-  const a = Math.random() * Math.PI * 2, r = Math.random() * spread;
-  const up = new THREE.Vector3(0, 1, 0), right = new THREE.Vector3().crossVectors(_d, up).normalize(), up2 = new THREE.Vector3().crossVectors(right, _d);
-  _d.addScaledVector(right, Math.cos(a) * r).addScaledVector(up2, Math.sin(a) * r).normalize();
-  // start the ray level with the player (so nothing between the camera and the player is hit)
+  // rays start level with the player, so nothing between the camera and the player is hit
   _o.copy(camera.position);
-  const skip = Math.max(0, _p.copy(P.pos).setY(P.eyeY()).sub(_o).dot(_d));
+  camDir(_d);
+  const skip = scoped ? 0 : Math.max(0, _p.copy(P.pos).setY(P.eyeY()).sub(_o).dot(_d));
   _o.addScaledVector(_d, skip);
-  const o = [_o.x, _o.y, _o.z], dir = [_d.x, _d.y, _d.z];
-  let best = d.range, hitT = null, hitHead = false;
-  const wh = G.world.raycast(o, dir, d.range);
-  if (wh) best = wh.t;
-  for (const t of G.targets) { const h = t.rayHit(o, dir, best); if (h && h.t < best) { best = h.t; hitT = t; hitHead = h.head; } }
-  const end = new THREE.Vector3(o[0] + dir[0] * best, o[1] + dir[1] * best, o[2] + dir[2] * best);
-  // the bullet leaves the muzzle: anything right in front of the gun blocks it
-  _m.copy(P.muzzle);
-  const md = end.clone().sub(_m), ml = md.length(); md.divideScalar(ml || 1);
-  const block = G.world.raycast([_m.x, _m.y, _m.z], [md.x, md.y, md.z], ml - 0.05);
-  if (block) { end.set(...block.point); hitT = null; }
-  fx.flash(_m, d.id === 'pistol' ? 0.35 : 0.5);
-  fx.tracer(_m, end);
+  _m.copy(scoped ? _o : P.muzzle);
+  let anyHit = false, head = false, kills = [];
+  const pellets = d.pellets || 1;
+  for (let k = 0; k < pellets; k++) {
+    camDir(_d);
+    const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * spread;
+    _r.crossVectors(_d, _up).normalize(); _u2.crossVectors(_r, _d);
+    _d.addScaledVector(_r, Math.cos(a) * r).addScaledVector(_u2, Math.sin(a) * r).normalize();
+    const o = [_o.x, _o.y, _o.z], dir = [_d.x, _d.y, _d.z];
+    let best = d.range, hitT = null, hitHead = false;
+    const wh = G.world.raycast(o, dir, d.range);
+    if (wh) best = wh.t;
+    for (const t of shootables()) { const h = t.rayHit(o, dir, best); if (h && h.t < best) { best = h.t; hitT = t; hitHead = h.head; } }
+    const end = new THREE.Vector3(o[0] + dir[0] * best, o[1] + dir[1] * best, o[2] + dir[2] * best);
+    // anything right in front of the muzzle blocks the shot
+    let block = null;
+    if (!scoped) {
+      const md = end.clone().sub(_m), ml = md.length(); md.divideScalar(ml || 1);
+      block = G.world.raycast([_m.x, _m.y, _m.z], [md.x, md.y, md.z], ml - 0.05);
+      if (block) { end.set(...block.point); hitT = null; }
+    }
+    if (k < 3) fx.tracer(_m, end);
+    if (hitT) {
+      // damage drops off past half the gun's range; helmets soak up part of a headshot
+      const fall = clamp(1.25 - best / d.range, 0.5, 1);
+      const mult = hitHead ? 1 + (d.head - 1) * (1 - HELMET_CUT[hitT.helm || 0]) : 1;
+      const dealt = hitT.damage(d.dmg * mult * fall);
+      G.dmgDealt += dealt; G.hits++;
+      fx.puff(end, 0xa01818, 4, 0.22);
+      anyHit = true; head = head || hitHead;
+      if (!hitT.alive && !kills.includes(hitT)) kills.push(hitT);
+    } else if (wh || block) {
+      const kind = block ? block.kind : wh.kind;
+      if (k < 4) fx.puff(end, kind === 'water' ? 0xd8eef5 : kind === 'tree' ? 0x6b5434 : kind === 'wall' ? 0xc8c0b0 : 0x9a8462, 4, kind === 'water' ? 0.5 : 0.3);
+    }
+  }
+  if (!scoped) fx.flash(P.muzzle, d.id === 'pistol' || d.id === 'smg' ? 0.35 : 0.55);
   audio.shot(d.sound);
   P.recoilKick = 1;
-  // camera kick
   const kick = d.recoil * (0.7 + Math.random() * 0.6) * (G.aimK > 0.5 ? 0.6 : 1);
   G.pitch = clamp(G.pitch + kick, -1.3, 1.35); G.recoil = (G.recoil || 0) + kick;
   G.yaw += (Math.random() - 0.5) * d.recoil * 0.6;
-  if (hitT) {
-    const dmg = d.dmg * (hitHead ? 2 : 1);
-    hitT.damage(dmg);
-    G.hits++;
-    fx.puff(end, 0xa01818, 6, 0.25);
-    hitMarker(hitHead);
-    if (!hitT.alive) { G.kills++; feed(`<b>You</b> ➜ target${hitHead ? ' <em>headshot</em>' : ''}`); hitT.respawnT = 4; }
-  } else if (wh || block) {
-    const kind = block ? block.kind : wh.kind;
-    fx.puff(end, kind === 'water' ? 0xd8eef5 : kind === 'tree' ? 0x6b5434 : kind === 'wall' ? 0xc8c0b0 : 0x9a8462, 5, kind === 'water' ? 0.5 : 0.3);
-  }
+  if (anyHit) hitMarker(head);
+  for (const t of kills) killed(t, 'You', d.name, head);
   drawSlots();
+}
+function killed(t, by, how, head) {
+  if (by === 'You') G.kills++;
+  feed(`<b>${by}</b> ➜ ${t.name || 'enemy'} <em>${head ? 'headshot' : how}</em>`);
+  if (G.mode === 'training') t.respawnT = 4;
 }
 
 let hitTimer = 0;
@@ -186,69 +269,221 @@ function feed(html) {
 let toastT = 0;
 function toast(text, secs = 2) { $('toast').textContent = text; $('toast').classList.add('show'); toastT = secs; }
 
+/* ------------------------------------------------------------------ healing and grenades */
+function useMed(kind) {
+  const P = G.player, inv = G.inv;
+  if (!P.alive || P.air || G.heal || inv[kind] <= 0) return;
+  if (P.health >= 100) { toast('HEALTH IS FULL', 1.2); return; }
+  G.heal = { kind, t: 0, dur: kind === 'medkit' ? 5 : 2.2 };
+  if (gun()) gun().reloading = 0;
+}
+function finishHeal() {
+  const P = G.player, h = G.heal; G.heal = null;
+  G.inv[h.kind]--;
+  P.health = Math.min(100, P.health + (h.kind === 'medkit' ? 75 : 15));
+  audio.heal(); drawItems();
+}
+function throwNade() {
+  const P = G.player;
+  if (!P.alive || P.air || G.inv.grenade <= 0) return;
+  G.inv.grenade--; G.heal = null;
+  camDir(_d);
+  const dir = _d.clone().add(new THREE.Vector3(0, 0.25, 0)).normalize();
+  G.grenades.throw(new THREE.Vector3(P.pos.x + _d.x * 0.5, P.pos.y + P.height - 0.2, P.pos.z + _d.z * 0.5), dir, 'You');
+  audio.swap(); drawItems();
+}
+function explode(p, owner) {
+  fx.flash(p, 6); fx.puff(p, 0xffa040, 10, 1.6); fx.puff(p.clone().add(new THREE.Vector3(0, 1, 0)), 0x555555, 10, 2.2);
+  const dist = camera.position.distanceTo(p);
+  audio.boom(clamp(1.2 - dist / 120, 0.2, 1));
+  G.shake = Math.max(G.shake, clamp(1 - dist / 40, 0, 1) * 0.6);
+  for (const s of [G.player].concat(shootables())) {
+    if (!s.alive) continue;
+    const c = s.pos.clone().setY(s.pos.y + 1), d = c.distanceTo(p);
+    if (d > BLAST_R) continue;
+    const dir = c.clone().sub(p).normalize();
+    const wall = G.world.raycast([p.x, p.y + 0.1, p.z], [dir.x, dir.y, dir.z], d);
+    if (wall && wall.kind === 'wall') continue;
+    const dealt = s.damage(BLAST_DMG * (1 - d / BLAST_R));
+    if (s === G.player) { hurt(); continue; }
+    if (owner === 'You') { G.dmgDealt += dealt; hitMarker(false); if (!s.alive) killed(s, 'You', 'grenade', false); }
+  }
+}
+function hurt() { $('dmg').style.opacity = 1; G.hurtT = 0.4; audio.hurt(); }
+
+/* ------------------------------------------------------------------ picking things up */
+function updatePickup(dt) {
+  G.pickT -= dt;
+  if (G.pickT > 0) return;
+  G.pickT = 0.2;
+  const P = G.player;
+  if (!P.alive || P.air) { $('pick').innerHTML = ''; G.pickList = []; return; }
+  const near = G.loot.near(P.pos.x, P.pos.y, P.pos.z, 2.2);
+  // walk over ammo, meds, armour and grenades to take them
+  for (const it of near) {
+    if (Math.hypot(it.x - P.pos.x, it.z - P.pos.z) > 1.4) continue;
+    const msg = G.loot.take(it, G.inv, P, true);
+    if (msg) { feed(msg); audio.pickup(); drawSlots(); drawItems(); }
+  }
+  G.pickList = G.loot.near(P.pos.x, P.pos.y, P.pos.z, 2.2).filter((it) => it.kind.startsWith('gun:')).slice(0, 3);
+  const html = G.pickList.map((it, i) => `<button data-id="${it.id}">${isTouch ? '' : i === 0 ? '<kbd>F</kbd>' : ''}${itemName(it)}</button>`).join('');
+  if ($('pick').dataset.html !== html) {
+    $('pick').innerHTML = html; $('pick').dataset.html = html;
+    $('pick').querySelectorAll('button').forEach((b) => b.addEventListener('pointerdown', (e) => { e.stopPropagation(); takeGun(+b.dataset.id); }));
+  }
+}
+function takeGun(id) {
+  const it = G.loot.items.find((x) => x.id === id && !x.taken);
+  if (!it) return;
+  const msg = G.loot.take(it, G.inv, G.player, false);
+  if (msg) { feed(msg); audio.pickup(); G.player.setGun(gun() ? gun().def.id : null); drawSlots(); G.pickT = 0; $('pick').dataset.html = ''; }
+}
+function drawItems() {
+  const inv = G.inv;
+  for (const [id, n] of [['useBand', inv.bandage], ['useKit', inv.medkit], ['useNade', inv.grenade]]) {
+    const b = $(id); b.querySelector('b').textContent = n; b.classList.toggle('none', n <= 0);
+  }
+}
+
+/* ------------------------------------------------------------------ the drop: plane, free fall, parachute */
+function planePos(t, out) {
+  const r = G.route, s = t * PLANE_SPEED;
+  return out.set(r.ax + r.dx * s, PLANE_Y, r.az + r.dz * s);
+}
+function jump() {
+  const P = G.player;
+  if (P.air !== 'plane') return;
+  P.air = 'fall'; G.fallT = 0;
+  planePos(G.planeT, P.pos); P.pos.y -= 4;
+  P.vel.set(G.route.dx * 14, -6, G.route.dz * 14);
+  audio.wind(1);
+  toast('', 0);
+}
+function openChute() {
+  const P = G.player;
+  if (P.air !== 'fall') return;
+  P.air = 'chute'; P.setChute(true); audio.chute();
+}
+function airMove(dt, k) {
+  const P = G.player, v = P.vel;
+  const fx_ = Math.sin(G.yaw), fz_ = Math.cos(G.yaw), rx = -fz_, rz = fx_;
+  const ground = Math.max(G.world.groundBelow(P.pos.x, P.pos.z, P.pos.y), WATER_Y - 1.2);
+  let tx, tz, ty;
+  if (P.air === 'fall') {
+    G.fallT += dt;
+    const fwd = 6 + Math.max(0, k.my) * 22 - Math.max(0, -k.my) * 4;
+    tx = fx_ * fwd + rx * k.mx * 14; tz = fz_ * fwd + rz * k.mx * 14;
+    ty = -36 - Math.max(0, k.my) * 14;
+    const kk = Math.min(1, dt * 1.2);
+    v.x += (tx - v.x) * kk; v.z += (tz - v.z) * kk; v.y += (ty - v.y) * Math.min(1, dt * 1.6);
+    if (P.pos.y - ground < 95 && G.fallT > 1.5) openChute();
+  } else {
+    const fwd = 4.5 + k.my * 6;
+    tx = fx_ * fwd + rx * k.mx * 6; tz = fz_ * fwd + rz * k.mx * 6;
+    ty = k.my < -0.3 ? -4 : -6.2;
+    const kk = Math.min(1, dt * 2);
+    v.x += (tx - v.x) * kk; v.z += (tz - v.z) * kk; v.y += (ty - v.y) * kk;
+  }
+  P.pos.addScaledVector(v, dt);
+  const lim = HALF - 30;
+  P.pos.x = clamp(P.pos.x, -lim, lim); P.pos.z = clamp(P.pos.z, -lim, lim);
+  const g2 = Math.max(G.world.groundBelow(P.pos.x, P.pos.z, P.pos.y + 0.5), WATER_Y - 1.2);
+  if (P.pos.y <= g2) {
+    // landed
+    P.pos.y = g2; v.set(0, 0, 0); P.air = null; P.setChute(false); P.onGround = true;
+    audio.land();
+    if (!gun()) feed('Find a gun! Search the buildings.');
+  }
+  P.yaw = G.yaw;
+  P.moveSpeed = 0;
+}
+
 /* ------------------------------------------------------------------ camera */
 const _cp = new THREE.Vector3(), _piv = new THREE.Vector3();
 function updateCamera(dt, aiming) {
-  const P = G.player;
+  const P = G.player, g = gun();
   G.aimK += ((aiming ? 1 : 0) - G.aimK) * Math.min(1, dt * 12);
   const k = G.aimK;
-  const dist = 3.2 - 1.15 * k, side = 0.85 - 0.05 * k, lift = 0.3 - 0.12 * k;
   camDir(_d);
+  let dist = 3.2 - 1.15 * k, side = 0.85 - 0.05 * k, lift = 0.3 - 0.12 * k, py = P.pos.y + P.height - 0.25;
+  if (P.air === 'plane') { planePos(G.planeT, _piv); dist = 34; side = 0; lift = 4; py = _piv.y; }
+  else if (P.air === 'fall') { dist = 6; side = 0; lift = 0.8; py = P.pos.y + 0.6; }
+  else if (P.air === 'chute') { dist = 8; side = 0; lift = 1.5; py = P.pos.y + 2; }
+  else if (!P.alive) { dist = 5; side = 0; lift = 1.5; }
   const rx = -Math.cos(G.yaw), rz = Math.sin(G.yaw);
-  _piv.set(P.pos.x + rx * side, P.pos.y + P.height - 0.25 + lift, P.pos.z + rz * side);
-  // pull in if a wall or the ground is in the way
+  const bx = P.air === 'plane' ? _piv.x : P.pos.x, bz = P.air === 'plane' ? _piv.z : P.pos.z;
+  _piv.set(bx + rx * side, py + lift, bz + rz * side);
   const back = [-_d.x, -_d.y, -_d.z];
-  const hit = G.world.raycast([_piv.x, _piv.y, _piv.z], back, dist + 0.3);
+  const hit = P.air === 'plane' ? null : G.world.raycast([_piv.x, _piv.y, _piv.z], back, dist + 0.3);
   const dd = hit ? Math.max(0.3, hit.t - 0.3) : dist;
   _cp.set(_piv.x + back[0] * dd, _piv.y + back[1] * dd, _piv.z + back[2] * dd);
   const gy = Math.max(WATER_Y, G.world.heightAt(_cp.x, _cp.z)) + 0.3;
   if (_cp.y < gy) _cp.y = gy;
+  // sniper scope: look from the soldier's eye
+  const scoped = g && g.def.scope && k > 0.8 && !P.air && P.alive;
+  if (scoped) _cp.set(P.pos.x, P.eyeY(), P.pos.z).addScaledVector(_d, 0.3);
+  $('scope').classList.toggle('on', !!scoped);
+  P.root.visible = !scoped && P.air !== 'plane';
   camera.position.copy(_cp);
-  camera.lookAt(_cp.x + _d.x, _cp.y + _d.y, _cp.z + _d.z);
-  if (DBG_CAM) { // testing aid: look at the soldier from the side / front
+  if (G.shake > 0) { camera.position.x += (Math.random() - 0.5) * G.shake; camera.position.y += (Math.random() - 0.5) * G.shake; G.shake = Math.max(0, G.shake - dt * 1.5); }
+  camera.lookAt(camera.position.x + _d.x, camera.position.y + _d.y, camera.position.z + _d.z);
+  if (DBG_CAM && !P.air) {
     const a = G.yaw + (DBG_CAM === 'front' ? 0 : -Math.PI / 2);
     camera.position.set(P.pos.x + Math.sin(a) * 2.2, P.pos.y + 1.4, P.pos.z + Math.cos(a) * 2.2);
     camera.lookAt(P.pos.x, P.pos.y + 1.1, P.pos.z);
   }
-  const fov = 70 + (gun().def.fov - 70) * k;
+  const fov = 70 + ((g && !P.air ? g.def.fov : 70) - 70) * k;
   if (Math.abs(camera.fov - fov) > 0.05) { camera.fov = fov; camera.updateProjectionMatrix(); }
-  // the sun and its shadow follow the player
-  sun.position.set(P.pos.x + SUN.x * 120, P.pos.y + SUN.y * 120, P.pos.z + SUN.z * 120);
-  sun.target.position.copy(P.pos);
-  if (G.world.sky) G.world.sky.position.set(_cp.x, 0, _cp.z);
+  const fp = P.air === 'plane' ? _piv : P.pos;
+  sun.position.set(fp.x + SUN.x * 120, fp.y + SUN.y * 120, fp.z + SUN.z * 120);
+  sun.target.position.copy(fp);
+  if (G.world.sky) G.world.sky.position.set(camera.position.x, 0, camera.position.z);
 }
 
 /* ------------------------------------------------------------------ HUD */
 const mini = $('mini').getContext('2d'), bigm = $('bigmap-c').getContext('2d');
+function drawZoneOn(c, X, scale) {
+  const Z = G.zone;
+  if (!Z) return;
+  c.lineWidth = 3 / scale;
+  c.strokeStyle = 'rgba(80,170,255,0.95)'; c.beginPath(); c.arc(X(Z.cur.x), X(Z.cur.z), Math.max(0.1, Z.cur.r * scale), 0, Math.PI * 2); c.stroke();
+  if (!Z.done) { c.strokeStyle = 'rgba(255,255,255,0.95)'; c.beginPath(); c.arc(X(Z.next.x), X(Z.next.z), Math.max(0.1, Z.next.r * scale), 0, Math.PI * 2); c.stroke(); }
+}
+function drawRouteOn(c, X) {
+  if (!G.route || G.player.air !== 'plane') return;
+  const r = G.route;
+  c.strokeStyle = 'rgba(255,255,255,0.8)'; c.setLineDash([8, 6]); c.lineWidth = 2;
+  c.beginPath(); c.moveTo(X(r.ax), X(r.az)); c.lineTo(X(r.ax + r.dx * r.len), X(r.az + r.dz * r.len)); c.stroke(); c.setLineDash([]);
+}
+function myPos() { return G.player.air === 'plane' ? planePos(G.planeT, _p) : G.player.pos; }
 function drawMinimap() {
-  const P = G.player, c = mini, W = 300, map = G.world.mapCanvas, scale = map.width / (2 * HALF);
-  const view = 160; // metres across
+  const c = mini, W = 300, map = G.world.mapCanvas, scale = map.width / (2 * HALF), mp = myPos();
+  const view = G.player.air ? 500 : 180;
+  const s = W / (view * scale);
   c.save();
-  c.clearRect(0, 0, W, W);
+  c.fillStyle = '#1f5f82'; c.fillRect(0, 0, W, W);
   c.translate(W / 2, W / 2);
-  c.rotate(G.yaw - Math.PI); // map turns with the player (up = where you look)
-  const px = (P.pos.x + HALF) * scale, pz = (P.pos.z + HALF) * scale, s = W / (view * scale);
+  c.rotate(G.yaw - Math.PI); // the map turns with you (up = where you look)
   c.scale(s, s);
-  c.drawImage(map, -px, -pz);
-  c.restore();
-  // targets nearby
-  c.save(); c.translate(W / 2, W / 2); c.rotate(G.yaw - Math.PI);
+  const px = (mp.x + HALF) * scale, pz = (mp.z + HALF) * scale;
+  c.translate(-px, -pz);
+  c.drawImage(map, 0, 0);
+  const X = (x) => (x + HALF) * scale;
+  drawZoneOn(c, X, scale);
+  drawRouteOn(c, X);
   c.fillStyle = '#ff4a3a';
-  for (const t of G.targets) {
-    if (!t.alive) continue;
-    const dx = (t.pos.x - P.pos.x) * (W / view), dz = (t.pos.z - P.pos.z) * (W / view);
-    if (Math.hypot(dx, dz) < W / 2 - 6) { c.beginPath(); c.arc(dx, dz, 4, 0, Math.PI * 2); c.fill(); }
-  }
+  for (const t of G.targets) if (t.alive) { c.beginPath(); c.arc(X(t.pos.x), X(t.pos.z), 4 / s, 0, Math.PI * 2); c.fill(); }
   c.restore();
-  // me: an arrow pointing up
   c.fillStyle = '#ffcf3f'; c.strokeStyle = '#000'; c.lineWidth = 2;
   c.beginPath(); c.moveTo(W / 2, W / 2 - 12); c.lineTo(W / 2 + 8, W / 2 + 9); c.lineTo(W / 2, W / 2 + 4); c.lineTo(W / 2 - 8, W / 2 + 9); c.closePath(); c.stroke(); c.fill();
 }
 function drawBigMap() {
-  const c = bigm, W = 600, map = G.world.mapCanvas, P = G.player;
+  const c = bigm, W = 600, map = G.world.mapCanvas, mp = myPos();
   c.drawImage(map, 0, 0, W, W);
-  const X = (x) => ((x + HALF) / (2 * HALF)) * W;
-  c.save(); c.translate(X(P.pos.x), X(P.pos.z)); c.rotate(-G.yaw + Math.PI);
+  const scale = W / (2 * HALF), X = (x) => (x + HALF) * scale;
+  drawZoneOn(c, X, scale);
+  drawRouteOn(c, X);
+  c.save(); c.translate(X(mp.x), X(mp.z)); c.rotate(-G.yaw + Math.PI);
   c.fillStyle = '#ffcf3f'; c.strokeStyle = '#000'; c.lineWidth = 2;
   c.beginPath(); c.moveTo(0, -12); c.lineTo(8, 9); c.lineTo(0, 4); c.lineTo(-8, 9); c.closePath(); c.stroke(); c.fill();
   c.restore();
@@ -262,51 +497,89 @@ function buildCompass() {
   }
   strip.innerHTML = html;
 }
+const setT = (id, v) => { const e = $(id); if (e.textContent !== String(v)) e.textContent = v; };
 function updateHUD(dt) {
   const P = G.player, g = gun();
-  // heading: north is -z
   const heading = ((Math.atan2(Math.sin(G.yaw), -Math.cos(G.yaw)) * 180) / Math.PI + 360) % 360;
   $('compass-strip').style.transform = `translateX(${$('compass').clientWidth / 2 - (heading + 360) * 2}px)`;
-  $('hpbar').style.width = P.health + '%'; $('hptext').textContent = Math.ceil(P.health);
+  $('hpbar').style.width = P.health + '%'; setT('hptext', Math.ceil(P.health));
+  $('hpbar').parentElement.classList.toggle('low', P.health < 30);
   $('armorbar').style.width = P.armor + '%';
-  $('ammo-n').textContent = g.ammo; $('ammo-n').classList.toggle('low', g.ammo <= g.def.mag * 0.2);
-  $('ammo-r').textContent = '/ ' + g.reserve;
-  $('reloadtxt').textContent = g.busy ? 'RELOADING…' : g.ammo === 0 && g.reserve > 0 ? 'PRESS R TO RELOAD' : '';
-  const spread = (G.aimK > 0.5 ? g.def.aimSpread : g.def.spread) * (1 + (P.moveSpeed > 1 ? 0.8 : 0)) + g.bloom;
-  $('cross').style.setProperty('--gap', (4 + spread * 420).toFixed(1) + 'px');
+  setT('vestlv', P.vest ? `VEST ${P.vest}` : 'VEST —'); $('vestlv').classList.toggle('on', P.vest > 0);
+  setT('helmlv', P.helm ? `HELMET ${P.helm}` : 'HELMET —'); $('helmlv').classList.toggle('on', P.helm > 0);
+  if (g) {
+    setT('ammo-n', g.ammo); $('ammo-n').classList.toggle('low', g.ammo <= g.def.mag * 0.2);
+    setT('ammo-r', '/ ' + g.reserve);
+    setT('reloadtxt', g.busy ? 'RELOADING…' : g.ammo === 0 && g.reserve === 0 ? 'NO AMMO' : '');
+  } else { setT('ammo-n', '—'); setT('ammo-r', ''); setT('reloadtxt', ''); }
+  if (g) {
+    const spread = (G.aimK > 0.5 ? g.def.aimSpread : g.def.spread) * (1 + (P.moveSpeed > 1 ? 0.8 : 0)) + g.bloom;
+    $('cross').style.setProperty('--gap', (4 + spread * 420).toFixed(1) + 'px');
+  }
   $('cross').classList.toggle('aim', G.aimK > 0.5);
   if (hitTimer > 0) { hitTimer -= dt; if (hitTimer <= 0) $('hitm').classList.remove('show'); }
   if (toastT > 0) { toastT -= dt; if (toastT <= 0) $('toast').classList.remove('show'); }
+  if (G.hurtT > 0) { G.hurtT -= dt; if (G.hurtT <= 0) $('dmg').style.opacity = 0; }
+  // healing bar
+  $('healbar').classList.toggle('on', !!G.heal);
+  if (G.heal) { $('healbar').querySelector('i').style.width = ((G.heal.t / G.heal.dur) * 100).toFixed(0) + '%'; $('healbar').querySelector('span').textContent = G.heal.kind === 'medkit' ? 'Using med kit…' : 'Bandaging…'; }
+  // the drop
+  document.body.classList.toggle('air', !!P.air);
+  const ab = $('airbtn');
+  ab.classList.toggle('on', P.air === 'plane' || P.air === 'fall');
+  setT('airbtn', P.air === 'plane' ? 'JUMP' : 'OPEN');
+  setT('altitude', P.air === 'fall' || P.air === 'chute' ? Math.max(0, Math.round(P.pos.y - G.world.groundBelow(P.pos.x, P.pos.z, P.pos.y))) + ' m' : '');
+  // the zone
+  if (G.zone) {
+    const Z = G.zone, zi = $('zoneinfo');
+    setT('zt', Z.done ? '' : fmt(Z.t));
+    setT('zmsg', Z.done ? 'Final zone' : Z.phase === 'wait' ? 'Zone shrinks' : 'Zone shrinking');
+    zi.classList.toggle('shrink', Z.phase === 'shrink');
+    const dIn = Math.hypot(P.pos.x - Z.next.x, P.pos.z - Z.next.z) - Z.next.r;
+    setT('zdist', !P.air && dIn > 0 && !Z.done ? `Safe zone ${Math.round(dIn)} m away` : '');
+    $('outzone').classList.toggle('on', !P.air && P.alive && !Z.inside(P.pos.x, P.pos.z));
+    setT('alive', 1 + G.enemies.filter((e) => e.alive).length);
+    setT('kills', G.kills);
+  } else $('outzone').classList.remove('on');
   // area name when entering a named place
   let area = '';
   for (const A of AREAS) if (Math.hypot(P.pos.x - A.x, P.pos.z - A.z) < A.r) area = A.name;
-  if (area !== G.area) { G.area = area; if (area) { $('area').textContent = area.toUpperCase(); $('area').classList.add('show'); G.areaT = 3; } }
+  if (area !== G.area && !P.air) { G.area = area; if (area) { $('area').textContent = area.toUpperCase(); $('area').classList.add('show'); G.areaT = 3; } }
   if (G.areaT > 0) { G.areaT -= dt; if (G.areaT <= 0) $('area').classList.remove('show'); }
-  $('coords').textContent = `${Math.round(P.pos.x)}, ${Math.round(P.pos.z)}`;
+  const mp = myPos();
+  setT('coords', `${Math.round(mp.x)}, ${Math.round(mp.z)}`);
   drawMinimap();
   if (!$('bigmap').classList.contains('hidden')) drawBigMap();
+}
+
+/* ------------------------------------------------------------------ results */
+function endMatch(won) {
+  if (G.state !== 'play') return;
+  G.state = 'over'; G.overT = 0;
+  input.unlock();
+  const alive = 1 + G.enemies.filter((e) => e.alive).length, total = 1 + G.enemies.length;
+  $('o-title').textContent = won ? 'WINNER!' : 'YOU DIED';
+  $('o-sub').textContent = won ? (G.enemies.length ? 'Last one standing on the island.' : 'You survived every zone. Computer players join in the next update.')
+    : G.enemies.length ? `Placed #${alive} of ${total}.` : 'The zone got you. Stay inside the white circle on the map.';
+  const stat = (l, v) => `<div><span>${l}</span><b>${v}</b></div>`;
+  $('o-stats').innerHTML = stat('Rank', `#${won ? 1 : alive}`) + stat('Kills', G.kills) + stat('Damage', Math.round(G.dmgDealt)) + stat('Survived', fmt(G.matchT));
+  setTimeout(() => $('over').classList.remove('hidden'), won ? 1200 : 2200);
+  if (won) audio.ding();
 }
 
 /* ------------------------------------------------------------------ flow */
 function showMenu() {
   G.state = 'menu';
   input.unlock();
-  $('menu').classList.remove('hidden'); $('hud').classList.add('hidden'); $('pause').classList.add('hidden'); $('clickplay').classList.add('hidden');
-  document.body.classList.remove('playing');
+  clearMatch();
+  G.player.air = null; G.player.root.visible = true;
+  $('menu').classList.remove('hidden'); $('hud').classList.add('hidden'); $('pause').classList.add('hidden'); $('over').classList.add('hidden'); $('clickplay').classList.add('hidden');
+  document.body.classList.remove('playing', 'air');
   $('m-sens').value = S.sens;
   $('m-q').querySelectorAll('button').forEach((b) => {
     b.classList.toggle('on', b.dataset.v === S.q);
     b.onclick = () => { if (S.q === b.dataset.v) return; S.q = b.dataset.v; save(); location.reload(); };
   });
-}
-function startTraining() {
-  audio.init();
-  G.state = 'play';
-  $('menu').classList.add('hidden'); $('hud').classList.remove('hidden');
-  document.body.classList.add('playing');
-  input.lock();
-  toast('TRAINING GROUND', 2.5);
-  feed('Shoot the targets in the streets. Find the camp range in the north.');
 }
 function pause() {
   if (G.state !== 'play') return;
@@ -321,7 +594,13 @@ input.onLockChange = (locked) => {
 };
 input.onPress = (code) => {
   if (code === 'Escape' || code === 'KeyP') { if (G.state === 'paused') resume(); else if (G.state === 'play' && (isTouch || !input.locked)) pause(); }
+  if (G.state !== 'play') return;
   if (code === 'KeyM') toggleMap();
+  if (code === 'KeyF') { if (G.player.air === 'plane') jump(); else if (G.pickList && G.pickList[0]) takeGun(G.pickList[0].id); }
+  if (code === 'Space') { if (G.player.air === 'plane') jump(); else if (G.player.air === 'fall') openChute(); }
+  if (code === 'Digit4') useMed('bandage');
+  if (code === 'Digit5') useMed('medkit');
+  if (code === 'KeyG') throwNade();
 };
 function toggleMap() { if (G.state === 'play') $('bigmap').classList.toggle('hidden'); }
 $('game').addEventListener('click', () => { if (G.state === 'play' && !input.locked) input.lock(); });
@@ -330,52 +609,84 @@ $('game').addEventListener('click', () => { if (G.state === 'play' && !input.loc
 let last = performance.now(), fpsT = 0, fpsN = 0;
 function frame(now) {
   requestAnimationFrame(frame);
-  let dt = Math.min(0.05, (now - last) / 1000); last = now;
-  if (!(dt > 0)) dt = 0;
-  fpsT += dt; fpsN++;
+  let rdt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (!(rdt > 0)) rdt = 0;
+  const dt = rdt * TIME_SCALE;
+  fpsT += rdt; fpsN++;
   if (fpsT > 1) { $('fps').textContent = fpsN + ' fps'; fpsT = 0; fpsN = 0; }
   const P = G.player;
   if (!P) return;
-  if (G.state === 'play') {
-    const k = input.read();
-    const sens = 0.0024 * S.sens * (G.aimK > 0.5 ? 0.6 : 1);
+  if (G.state === 'play' || G.state === 'over') {
+    const k = G.state === 'play' ? input.read() : { mx: 0, my: 0, lookX: 0, lookY: 0 };
+    const sens = 0.0024 * S.sens * (G.aimK > 0.5 ? (gun() && gun().def.scope ? 0.25 : 0.6) : 1);
     G.yaw -= k.lookX * sens; G.pitch = clamp(G.pitch - k.lookY * sens, -1.3, 1.35);
-    // the muzzle settles back down after the kick (most of it)
     if (G.recoil > 0) { const r = Math.min(G.recoil, dt * (k.fire ? 0.06 : 0.35) + G.recoil * dt * 4); G.pitch -= r * 0.8; G.recoil -= r; }
-    // move relative to the camera; the soldier faces where the camera looks
-    const fx_ = Math.sin(G.yaw), fz_ = Math.cos(G.yaw), rx = -fz_, rz = fx_;
-    const wx = fx_ * k.my + rx * k.mx, wz = fz_ * k.my + rz * k.mx;
-    const aiming = k.aim && !P.swim;
-    const sprint = k.sprint && k.my > 0.3 && !aiming && !k.fire;
-    P.crouching = k.crouch && !P.swim;
-    const wasGround = P.onGround;
-    P.move(dt, wx, wz, sprint ? 'sprint' : k.walk ? 'walk' : 'run', k.jump);
-    if (!wasGround && P.onGround) audio.land();
-    let dy = G.yaw - P.yaw; while (dy > Math.PI) dy -= Math.PI * 2; while (dy < -Math.PI) dy += Math.PI * 2;
-    P.yaw += dy * Math.min(1, dt * 18);
-    P.pitch = G.pitch;
-    // guns
-    for (const g of G.guns) g.update(dt);
-    if (k.slot1) switchGun(0); if (k.slot2) switchGun(1); if (k.swap) switchGun(1 - G.cur);
-    if (k.reload && gun().startReload()) { audio.reload(gun().def.reload); drawSlots(); }
-    if (k.fire && !P.swim && (isTouch || input.locked)) { if (gun().def.auto || !G.fireHeld) fire(); }
-    G.fireHeld = k.fire;
-    if (gun().ammo === 0 && !gun().busy && gun().reserve > 0 && gun().cool <= 0) { gun().startReload(); audio.reload(gun().def.reload); }
-    // footsteps
-    if (P.onGround && P.moveSpeed > 1.5) { G.stepT -= dt * P.moveSpeed; if (G.stepT <= 0) { G.stepT = 2.2; audio.step(P.crouching ? 0.4 : 1); } }
-    input.endFrame();
+    G.matchT += P.alive && G.state === 'play' ? dt : 0;
+    let aiming = false;
+    if (P.air === 'plane') {
+      G.planeT += dt;
+      planePos(G.planeT, _p);
+      G.plane.position.copy(_p); G.plane.rotation.y = Math.atan2(G.route.dx, G.route.dz);
+      for (const pr of G.plane.userData.props) pr.rotation.z += dt * 40;
+      P.pos.copy(_p);
+      if (G.planeT * PLANE_SPEED > G.route.len - 40) { jump(); feed('You were dropped at the end of the route.'); }
+    } else if (P.air) {
+      airMove(dt, k);
+      if (G.plane) { G.planeT += dt; planePos(G.planeT, _p); G.plane.position.copy(_p); if (G.planeT * PLANE_SPEED > G.route.len + 200) { scene.remove(G.plane); G.plane = null; } }
+    } else if (P.alive && G.state === 'play') {
+      const fx_ = Math.sin(G.yaw), fz_ = Math.cos(G.yaw), rx = -fz_, rz = fx_;
+      const wx = fx_ * k.my + rx * k.mx, wz = fz_ * k.my + rz * k.mx;
+      aiming = k.aim && !P.swim && !!gun();
+      const sprint = k.sprint && k.my > 0.3 && !aiming && !k.fire && !G.heal;
+      P.crouching = k.crouch && !P.swim;
+      const wasGround = P.onGround;
+      P.move(dt, wx, wz, sprint ? 'sprint' : k.walk || G.heal ? 'walk' : 'run', k.jump);
+      if (!wasGround && P.onGround) audio.land();
+      let dy = G.yaw - P.yaw; while (dy > Math.PI) dy -= Math.PI * 2; while (dy < -Math.PI) dy += Math.PI * 2;
+      P.yaw += dy * Math.min(1, dt * 18);
+      P.pitch = G.pitch;
+      // guns
+      for (const g of G.inv.guns) if (g) g.update(dt);
+      if (k.slot1) switchGun(0); if (k.slot2) switchGun(1); if (k.swap) switchGun(1 - G.inv.cur);
+      const g = gun();
+      if (g && k.reload && g.startReload()) { audio.reload(g.def.reload); G.heal = null; }
+      if (g && k.fire && !P.swim && (isTouch || input.locked)) { if (g.def.auto || !G.fireHeld) fire(); }
+      G.fireHeld = k.fire;
+      if (g && g.ammo === 0 && !g.busy && g.reserve > 0 && g.cool <= 0) { g.startReload(); audio.reload(g.def.reload); }
+      if (P.onGround && P.moveSpeed > 1.5) { G.stepT -= dt * P.moveSpeed; if (G.stepT <= 0) { G.stepT = 2.2; audio.step(P.crouching ? 0.4 : 1); } }
+      if (G.heal) { G.heal.t += dt; if (G.heal.t >= G.heal.dur) finishHeal(); }
+      updatePickup(dt);
+    }
+    if (G.state === 'play') input.endFrame();
     P.animate(dt, aiming);
-    updateCamera(dt, aiming);
-    // targets: idle, fall when hit, stand up again
+    updateCamera(rdt, aiming);
+    // the zone hurts anyone outside it
+    if (G.zone) {
+      G.zone.update(dt);
+      if (P.alive && !P.air && !G.zone.inside(P.pos.x, P.pos.z)) {
+        P.health = Math.max(0, P.health - G.zone.dps * dt);
+        G.zoneTickT -= dt; if (G.zoneTickT <= 0) { G.zoneTickT = 1; audio.zoneTick(); $('dmg').style.opacity = 0.5; G.hurtT = 0.3; }
+        if (P.health <= 0) { P.alive = false; P.dieT = 0; feed('<b>The zone</b> ➜ You'); }
+      }
+    }
+    G.grenades.update(dt, explode);
+    // training targets fall when hit and stand up again
     for (const t of G.targets) {
       if (!t.alive) { t.respawnT -= dt; if (t.respawnT <= 0) { t.revive(); t.yaw = Math.random() * Math.PI * 2; } }
       t.moveSpeed = 0; t.animate(dt, false);
     }
+    if (G.loot) G.loot.update(P.pos.x, P.pos.z);
     fx.update(dt);
-    updateHUD(dt);
+    if (G.state === 'play') {
+      updateHUD(rdt);
+      // end of the match
+      if (G.mode === 'battle') {
+        if (!P.alive) endMatch(false);
+        else if (G.enemies.length ? G.enemies.every((e) => !e.alive) : G.zone.stage >= STAGES.length - 1) endMatch(true);
+      } else if (!P.alive) { P.revive(); P.pos.set(13, G.world.heightAt(13, 13) + 0.1, 13); feed('Back on your feet.'); }
+    }
   } else if (G.state === 'menu') {
-    // slow fly-around over the town
-    G.menuA = (G.menuA || 0) + dt * 0.05;
+    G.menuA = (G.menuA || 0) + rdt * 0.05;
     camera.position.set(Math.sin(G.menuA) * 90, 55, Math.cos(G.menuA) * 90);
     camera.lookAt(0, 8, 0);
     if (camera.fov !== 60) { camera.fov = 60; camera.updateProjectionMatrix(); }
@@ -387,14 +698,21 @@ function frame(now) {
 }
 
 /* ------------------------------------------------------------------ buttons */
-$('start').onclick = startTraining;
+$('start').onclick = () => startMatch('battle');
+$('training').onclick = () => startMatch('training');
 $('m-sens').addEventListener('input', (e) => { S.sens = +e.target.value; save(); });
 $('pauseBtn').onclick = () => (G.state === 'paused' ? resume() : pause());
 $('p-resume').onclick = resume;
 $('p-menu').onclick = showMenu;
 $('p-sound').onclick = () => { audio.init(); audio.toggle(); $('p-sound').textContent = 'SOUND: ' + (audio.on ? 'ON' : 'OFF'); };
+$('o-again').onclick = () => startMatch(G.mode);
+$('o-menu').onclick = showMenu;
 $('mapBtn').onclick = toggleMap;
 $('mapClose').onclick = () => $('bigmap').classList.add('hidden');
+$('airbtn').addEventListener('pointerdown', (e) => { e.stopPropagation(); if (G.player.air === 'plane') jump(); else openChute(); });
+$('useBand').addEventListener('pointerdown', (e) => { e.stopPropagation(); useMed('bandage'); });
+$('useKit').addEventListener('pointerdown', (e) => { e.stopPropagation(); useMed('medkit'); });
+$('useNade').addEventListener('pointerdown', (e) => { e.stopPropagation(); throwNade(); });
 document.querySelectorAll('.slot').forEach((b) => b.addEventListener('pointerdown', (e) => { e.stopPropagation(); switchGun(+b.dataset.slot); }));
 addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
@@ -407,7 +725,8 @@ setTimeout(() => {
   G.buildMs = Math.round(performance.now() - t0);
   $('loading').classList.add('hidden');
   showMenu();
-  if (params.has('auto')) startTraining();
+  drawItems();
+  if (params.has('auto')) startMatch(params.get('auto') === 'training' ? 'training' : 'battle');
   requestAnimationFrame(frame);
   // the realistic soldier model (same characters as Kadal Nagaram); the built-in one until it loads
   if (!params.has('simple')) {

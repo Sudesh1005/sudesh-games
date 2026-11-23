@@ -6,6 +6,7 @@ import { makeHuman, animateHuman } from './human.js';
 import { modelLib, makeModelHuman } from './models.js';
 import { WATER_Y, HALF } from './world.js';
 import { gunModel } from './weapons.js';
+import { makeChute } from './drop.js';
 
 export const RADIUS = 0.34, HEIGHT = 1.75, CROUCH_H = 1.2, STEP = 0.55;
 const GRAV = 22, JUMP = 6.4;
@@ -22,6 +23,8 @@ export class Soldier {
     this.health = 100; this.armor = 0; this.alive = true; this.dieT = 0;
     this.gunId = null; this.gunMesh = null; this.muzzle = new THREE.Vector3();
     this.recoilKick = 0;
+    this.air = null;        // null on foot, 'plane', 'fall' (free fall) or 'chute'
+    this.vest = 0; this.helm = 0;
     this.buildBody();
   }
 
@@ -31,9 +34,11 @@ export class Soldier {
     if (o.model && modelLib()) this.h = makeModelHuman(o.model, o.index ?? -1);
     else this.h = makeHuman(o.look, { shadow: !o.low, texSize: o.low ? 128 : 256 });
     this.root = this.h.root;
+    this.root.rotation.order = 'YXZ'; // turn first, then lean (sky-diving, falling over)
     this.gunHolder = new THREE.Group();
     this.root.add(this.gunHolder);
     if (this.gunId) { const id = this.gunId; this.gunId = null; this.setGun(id); }
+    this.chute = null;
     if (this.scene) this.scene.add(this.root);
   }
   addTo(scene) { this.scene = scene; scene.add(this.root); }
@@ -46,6 +51,12 @@ export class Soldier {
     this.gunId = id;
     this.gunMesh = id ? gunModel(id) : null;
     if (this.gunMesh) this.gunHolder.add(this.gunMesh.group);
+  }
+
+  // parachute on / off
+  setChute(on) {
+    if (on && !this.chute) { this.chute = makeChute(); this.root.add(this.chute); }
+    if (!on && this.chute) { this.root.remove(this.chute); this.chute = null; }
   }
 
   get height() { return HEIGHT - (HEIGHT - CROUCH_H) * this.crouch; }
@@ -129,6 +140,9 @@ export class Soldier {
     this.root.position.copy(this.pos);
     this.root.rotation.set(0, this.yaw, 0);
     if (!this.alive) { this.deathPose(dt); return; }
+    this.root.visible = this.air !== 'plane';
+    this.gunHolder.visible = !this.air;
+    if (this.air === 'fall' || this.air === 'chute') { this.airPose(dt); return; }
     const amt = Math.min(1, sp / 2);
     h.gait = clamp((sp - 2.2) / 3.5, 0, 1);
     this.phase += dt * (2.2 + sp * 1.35) * (this.backwards ? -1 : 1) * (sp > 0.3 ? 1 : 0);
@@ -164,6 +178,27 @@ export class Soldier {
       this.gunMesh.group.updateMatrixWorld(true);
       this.muzzle.copy(this.gunMesh.muzzle).applyMatrix4(this.gunMesh.group.matrixWorld);
     }
+  }
+
+  // sky-diving (face down, arms and legs spread) or hanging under the canopy
+  airPose(dt) {
+    const h = this.h, t = performance.now() * 0.001;
+    animateHuman(h, 0, 0);
+    if (this.air === 'fall') {
+      this.root.rotation.x = 1.15;
+      this.root.position.y = this.pos.y + 0.9;
+      h.lArm.rotation.set(-0.3, 0, 1.25 + Math.sin(t * 7) * 0.05); h.rArm.rotation.set(-0.3, 0, -1.25 - Math.sin(t * 7) * 0.05);
+      h.lElbow.rotation.x = -0.5; h.rElbow.rotation.x = -0.5;
+      h.lLeg.rotation.set(0.25, 0, -0.25); h.rLeg.rotation.set(0.25, 0, 0.25);
+      h.lKnee.rotation.x = 0.9; h.rKnee.rotation.x = 0.9;
+      h.head.rotation.set(-0.7, 0, 0);
+    } else {
+      h.lArm.rotation.set(-2.75, 0, 0.35); h.rArm.rotation.set(-2.75, 0, -0.35);
+      h.lElbow.rotation.x = -0.5; h.rElbow.rotation.x = -0.5;
+      h.lLeg.rotation.set(-0.15 + Math.sin(t * 2) * 0.08, 0, -0.05); h.rLeg.rotation.set(-0.1 - Math.sin(t * 2) * 0.08, 0, 0.05);
+      h.lKnee.rotation.x = 0.25; h.rKnee.rotation.x = 0.2;
+    }
+    if (h.proc) h.applyProc();
   }
 
   deathPose(dt) {

@@ -118,6 +118,7 @@ export class World {
     for (let j = 0; j <= this.N; j++) for (let i = 0; i <= this.N; i++) this.h[j * (this.N + 1) + i] = finalHeight(-HALF + i * this.cellSize, -HALF + j * this.cellSize);
     this.group = new THREE.Group();
     this.spawns = [];
+    this.lootSpots = [];   // [x, y, z]: floors inside buildings, around the camp, in the open
     this.targets = [];
   }
 
@@ -141,6 +142,16 @@ export class World {
     this.circles.push(c); this.grid.add(c, x - r, z - r, x + r, z + r);
   }
   near(minx, minz, maxx, maxz) { return this.grid.query(minx, minz, maxx, maxz, [], ++this.stamp); }
+
+  // The highest floor under (x, z) that is not above y (terrain, floors, roofs, steps).
+  groundBelow(x, z, y, r = 0.3) {
+    let g = this.heightAt(x, z);
+    for (const b of this.near(x - r, z - r, x + r, z + r)) {
+      if (b.circle) continue;
+      if (x + r > b.min[0] && x - r < b.max[0] && z + r > b.min[2] && z - r < b.max[2] && b.max[1] <= y + 0.6 && b.max[1] > g) g = b.max[1];
+    }
+    return g;
+  }
 
   // Ray against boxes, trees/rocks and the ground. Returns { t, point, normal, kind } or null.
   raycast(o, d, maxT = 400) {
@@ -180,9 +191,10 @@ export class World {
       }
     }
     // ground: march, then refine
-    const gstep = 1.5;
+    // (short rays are checked at their end too, so small steps like a bouncing grenade still find the ground)
+    const gstep = Math.min(1.5, best);
     let prevT = 0, prevAbove = o[1] - Math.max(WATER_Y, this.heightAt(o[0], o[2]));
-    for (let t = gstep; t <= best; t += gstep) {
+    for (let t = gstep; t <= best + 1e-9; t = t >= best ? Infinity : Math.min(best, t + gstep)) {
       const y = o[1] + d[1] * t, x = o[0] + d[0] * t, z = o[2] + d[2] * t;
       const above = y - Math.max(WATER_Y, this.heightAt(x, z));
       if (above < 0 && prevAbove >= 0) {
@@ -337,8 +349,12 @@ export class World {
           for (const [a, b, c2, d2] of [[x0 - 0.15, z0 - 0.15, x1 + 0.15, z0 + 0.05], [x0 - 0.15, z1 - 0.05, x1 + 0.15, z1 + 0.15], [x0 - 0.15, z0, x0 + 0.05, z1], [x1 - 0.05, z0, x1 + 0.15, z1]]) put(a, yb + 0.25, b, c2, yb + 0.85, d2, color);
         }
       }
-      // a few spots inside and around to start from
+      // a few spots inside and around to start from, and places where loot lies
       this.spawns.push([cx, base + 0.05, cz]);
+      for (let f = 0; f < floors; f++) {
+        const fy = base + f * H + 0.02, xa = f ? x0 + 1.9 : x0 + 0.7;
+        for (let n = 0; n < 2; n++) this.lootSpots.push([xa + R() * (x1 - 0.7 - xa), fy, z0 + 0.7 + R() * (z1 - z0 - 1.4)]);
+      }
     };
     const hut = (cx, cz, rot) => house(cx, cz, 5 + R() * 1.5, 4.5 + R() * 1.5, 1, rot);
 
@@ -392,6 +408,8 @@ export class World {
     for (let i = 0; i < 14; i++) {
       const x = C.x - 45 + R() * 90, z = C.z - 40 + R() * 80, y = this.heightAt(x, z), s = 1 + R() * 0.4;
       put(x - s / 2, y, z - s / 2, x + s / 2, y + s, z + s / 2, 0x7d6b45);
+      this.lootSpots.push([x, y + s + 0.02, z]);                       // on top of the crate
+      this.lootSpots.push([x + s / 2 + 0.6, y + 0.02, z]);             // beside it
     }
     for (let i = 0; i < 8; i++) {
       const x = C.x - 50 + i * 14, z = C.z - 45, y = this.heightAt(x, z);

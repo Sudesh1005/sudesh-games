@@ -33,6 +33,8 @@ export class BattleAudio {
   }
   shot(id) {
     if (id === 'pistol') { this.burst(2400, 0.8, 0.7, 0.12); this.tone(160, 0.1, 0.5, 'sine', 0.4); }
+    else if (id === 'smg') { this.burst(3400, 0.8, 0.45, 0.07); this.tone(150, 0.06, 0.3, 'sine', 0.5); }
+    else if (id === 'sniper') { this.burst(2000, 0.6, 1.0, 0.35); this.tone(70, 0.45, 0.8, 'sine', 0.35); this.burst(4500, 1, 0.4, 0.06); }
     else if (id === 'rifle') { this.burst(3000, 0.7, 0.55, 0.09); this.burst(900, 1, 0.4, 0.15); this.tone(120, 0.08, 0.4, 'sine', 0.5); }
     else { this.burst(1400, 0.6, 0.9, 0.3); this.tone(90, 0.25, 0.7, 'sine', 0.4); this.burst(500, 1, 0.3, 0.2, 'bandpass', 0.35); }
   }
@@ -44,6 +46,10 @@ export class BattleAudio {
   marker(head) { this.tone(head ? 2200 : 1500, 0.05, 0.18, 'square'); if (head) this.tone(2900, 0.06, 0.12, 'square', 1, 0.04); }
   step(k = 1) { this.burst(380, 1.2, 0.07 * k, 0.05); }
   land() { this.burst(260, 1, 0.25, 0.1); }
+  wind(k) { this.burst(500 + k * 600, 0.5, 0.06 + k * 0.12, 0.25); }
+  chute() { this.burst(900, 0.6, 0.6, 0.35); this.tone(140, 0.25, 0.25, 'sine', 0.6); }
+  heal() { this.tone(523, 0.12, 0.15, 'triangle'); this.tone(784, 0.2, 0.15, 'triangle', 1, 0.1); }
+  zoneTick() { this.tone(300, 0.08, 0.12, 'square', 0.8); }
   splash() { this.burst(1200, 0.6, 0.2, 0.25, 'bandpass'); }
   empty() { this.tone(1800, 0.03, 0.2, 'square'); }
   reload(dur) { this.burst(2500, 3, 0.25, 0.05, 'bandpass', 0.1); this.burst(1800, 3, 0.3, 0.06, 'bandpass', dur * 0.55); this.burst(3200, 4, 0.3, 0.05, 'bandpass', dur * 0.85); }
