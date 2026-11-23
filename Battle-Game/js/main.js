@@ -25,6 +25,9 @@ const DBG_CAM = params.get('cam'); // testing aid
 const TIME_SCALE = clamp(+params.get('speed') || 1, 0.1, 30); // testing aid
 const GOD = params.has('god'); // testing aid: the player can't be hurt
 document.body.classList.toggle('touch', isTouch);
+// a tip on the loading screen
+const TIPS = ['Pass close to the white circle before the zone shrinks.', 'Headshots do more damage; helmets reduce it.', 'Crouch behind walls and rocks when you heal.', 'Guns come with a box of their ammo next to them.', 'The sniper scope zooms in when you aim.', 'Listen: shots and footsteps come from their side.', 'Grenades bounce off walls; walls also block the blast.'];
+$('tip').textContent = 'Tip: ' + TIPS[(Math.random() * TIPS.length) | 0];
 function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (s) => { s = Math.max(0, Math.ceil(s)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
@@ -34,7 +37,7 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (_) { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) { /* ignore */ } },
 };
-const S = Object.assign({ q: isTouch ? 'low' : 'med', sens: 1, level: 'normal', name: '' }, store.get('battle-settings', {}));
+const S = Object.assign({ q: isTouch ? 'low' : 'med', sens: 1, level: 'normal', name: '', assist: true }, store.get('battle-settings', {}));
 if (params.has('q')) S.q = params.get('q');
 if (!['low', 'med', 'high'].includes(S.q)) S.q = 'med';
 if (params.has('level')) S.level = params.get('level');
@@ -45,7 +48,8 @@ const Q = S.q;
 
 /* ------------------------------------------------------------------ renderer + scene */
 const renderer = new THREE.WebGLRenderer({ canvas: $('game'), antialias: Q !== 'low', powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(devicePixelRatio, Q === 'low' ? 1 : Q === 'med' ? 1.5 : 2));
+const BASE_PR = Math.min(devicePixelRatio, Q === 'low' ? 1 : Q === 'med' ? 1.5 : 2);
+renderer.setPixelRatio(BASE_PR);
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = Q !== 'low';
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -70,7 +74,7 @@ const input = new Input($('game'), isTouch);
 const fx = new FX(scene);
 const G = {
   state: 'boot', mode: 'battle', world: null, player: null, inv: new Inventory(), yaw: 0, pitch: 0, targets: [], enemies: [], bots: [], killer: null,
-  online: false, room: null, remotes: new Map(), seq: 0, sendT: 0, spectate: null,
+  online: false, room: null, remotes: new Map(), seq: 0, sendT: 0, spectate: null, pr: 0, zonePhase: '', assistT: 0, assistTarget: null, beatT: 0,
   camPos: new THREE.Vector3(), aimK: 0, stepT: 0, area: '', areaT: 0, kills: 0, shots: 0, hits: 0, dmgDealt: 0,
   loot: null, zone: null, plane: null, route: null, planeT: 0, grenades: null, heal: null, matchT: 0, overT: 0, pickT: 0, zoneTickT: 0, shake: 0,
 };
@@ -286,10 +290,38 @@ function fire() {
   if (anyHit) hitMarker(head);
   drawSlots();
 }
+function aimAssist(dt, firing) {
+  const g = gun(), P = G.player;
+  if (!isTouch || !S.assist || !g || P.air || !P.alive || (g.def.scope && G.aimK > 0.8)) { G.assistTarget = null; return; }
+  G.assistT -= dt;
+  camDir(_d);
+  if (G.assistT <= 0) {
+    G.assistT = 0.15; G.assistTarget = null;
+    let best = 0.075;
+    for (const t of shootables()) {
+      if (!t.alive || t.air === 'plane') continue;
+      const c = camera.position, tx = t.pos.x - c.x, ty = t.pos.y + t.height * 0.62 - c.y, tz = t.pos.z - c.z, d = Math.hypot(tx, ty, tz);
+      if (d > Math.min(g.def.range, 80) || d < 1) continue;
+      const ang = Math.acos(clamp((tx * _d.x + ty * _d.y + tz * _d.z) / d, -1, 1));
+      if (ang > best) continue;
+      if (G.world.raycast([c.x, c.y, c.z], [tx / d, ty / d, tz / d], d - 0.5)) continue;
+      best = ang; G.assistTarget = t;
+    }
+  }
+  const t = G.assistTarget;
+  if (!t || !t.alive) return;
+  const c = camera.position, tx = t.pos.x - c.x, ty = t.pos.y + t.height * 0.62 - c.y, tz = t.pos.z - c.z;
+  const wantYaw = Math.atan2(tx, tz), wantPitch = Math.atan2(ty, Math.hypot(tx, tz));
+  let dy = wantYaw - G.yaw; while (dy > Math.PI) dy -= Math.PI * 2; while (dy < -Math.PI) dy += Math.PI * 2;
+  const rate = (firing ? 0.9 : 0.45) * dt;
+  G.yaw += clamp(dy, -rate, rate); G.pitch += clamp(wantPitch - G.pitch, -rate, rate);
+}
+
 // One hit on a soldier from someone (the player, a computer player, or null for the zone).
 // silent = the hit marker is handled by the caller. Returns the damage done.
 function applyHit(from, target, dmg, head, how, silent) {
   if (!target.alive || (GOD && target === G.player)) return 0;
+  if (from === G.player && target !== G.player) damageNumber(new THREE.Vector3(target.pos.x, target.pos.y + target.height + 0.1, target.pos.z), dmg, head);
   if (target.remote) {
     if (room && from === G.player) room.send({ t: 'hit', from: room.me, to: target.remote, dmg: +dmg.toFixed(1), head: head ? 1 : 0, how });
     if (from === G.player && !silent) hitMarker(head);
@@ -304,7 +336,7 @@ function applyHit(from, target, dmg, head, how, silent) {
 }
 function died(t, from, how, head) {
   const by = from === G.player ? 'You' : from ? from.name : 'The zone';
-  if (from === G.player) G.kills++;
+  if (from === G.player && t !== G.player) { G.kills++; if (G.mode !== 'training') killBanner(t.name || 'target', head); }
   feed(`<b>${by}</b> ➜ ${t === G.player ? 'You' : t.name || 'target'} <em>${head ? 'headshot' : how}</em>`);
   if (G.mode === 'training' && t !== G.player) t.respawnT = 4;
   if (t.bot) { t.bot.dropLoot(G.loot); t.deadT = 0; }
@@ -327,6 +359,63 @@ function feed(html) {
 }
 let toastT = 0;
 function toast(text, secs = 2) { $('toast').textContent = text; $('toast').classList.add('show'); toastT = secs; }
+
+/* ------------------------------------------------------------------ sounds from around the island */
+// distance to (x, z) and which side it's on (-1 left .. 1 right of where the camera looks)
+function spatial(x, z) {
+  const P = G.player, dx = x - P.pos.x, dz = z - P.pos.z, d = Math.hypot(dx, dz) || 0.001;
+  return { d, pan: (dx * -Math.cos(G.yaw) + dz * Math.sin(G.yaw)) / d };
+}
+// someone else fired from a to b: their gunshot, and a whiz if it passed close by
+function heardShot(a, b, gunId) {
+  const P = G.player, sp = spatial(a[0], a[2]);
+  if (sp.d < 300) audio.far(gunId, sp.d, sp.pan * 0.8);
+  if (!P.alive || P.air) return;
+  const hx = P.pos.x, hy = P.pos.y + 1.5, hz = P.pos.z;
+  const vx = b[0] - a[0], vy = b[1] - a[1], vz = b[2] - a[2], L2 = vx * vx + vy * vy + vz * vz || 1;
+  const t = clamp(((hx - a[0]) * vx + (hy - a[1]) * vy + (hz - a[2]) * vz) / L2, 0, 1);
+  const cx = a[0] + vx * t - hx, cy = a[1] + vy * t - hy, cz = a[2] + vz * t - hz;
+  if (t > 0.05 && t < 0.98 && cx * cx + cy * cy + cz * cz < 6) audio.whiz(sp.pan);
+}
+// footsteps of the people around you
+function footsteps(s, dt) {
+  if (!s.alive || s.air || s.moveSpeed < 1.5 || s.swim) return;
+  s.stepT = (s.stepT || 0) - dt * s.moveSpeed;
+  if (s.stepT > 0) return;
+  s.stepT = 2.2;
+  const sp = spatial(s.pos.x, s.pos.z);
+  if (sp.d < 28) audio.step((1 - sp.d / 28) * (s.crouching ? 0.35 : 1.4), sp.pan);
+}
+
+/* ------------------------------------------------------------------ big moments: damage numbers, kill banner */
+const dmgPool = [];
+for (let i = 0; i < 14; i++) { const d = document.createElement('div'); d.className = 'dnum'; $('dmgnums').appendChild(d); dmgPool.push({ el: d, t: 0, p: new THREE.Vector3() }); }
+let dmgI = 0;
+function damageNumber(pos, n, head) {
+  const q = dmgPool[dmgI++ % dmgPool.length];
+  q.p.copy(pos); q.p.x += (Math.random() - 0.5) * 0.5; q.p.y += Math.random() * 0.35; q.t = 0.9;
+  q.el.textContent = Math.round(n); q.el.className = 'dnum show' + (head ? ' head' : '');
+}
+const _pp = new THREE.Vector3();
+function updateDamageNumbers(dt) {
+  for (const q of dmgPool) {
+    if (q.t <= 0) continue;
+    q.t -= dt; q.p.y += dt * 0.9;
+    if (q.t <= 0) { q.el.className = 'dnum'; continue; }
+    _pp.copy(q.p).project(camera);
+    if (_pp.z > 1) { q.el.style.opacity = 0; continue; }
+    q.el.style.opacity = Math.min(1, q.t * 2.5);
+    q.el.style.transform = `translate(${((_pp.x + 1) / 2) * innerWidth}px, ${((1 - _pp.y) / 2) * innerHeight}px) translate(-50%, -50%)`;
+  }
+}
+let banT = 0;
+function killBanner(name, head) {
+  const b = $('killban');
+  b.innerHTML = `<small>${head ? 'HEADSHOT' : 'ELIMINATED'}</small><b>${esc(name)}</b><span>${G.kills} KILL${G.kills === 1 ? '' : 'S'}</span>`;
+  b.classList.remove('show'); void b.offsetWidth; b.classList.add('show'); banT = 2;
+  audio.kill();
+  if (isTouch && navigator.vibrate) navigator.vibrate(25);
+}
 
 /* ------------------------------------------------------------------ healing and grenades */
 function useMed(kind) {
@@ -356,7 +445,7 @@ function throwNade() {
 function explode(p, owner) {
   fx.flash(p, 6); fx.puff(p, 0xffa040, 10, 1.6); fx.puff(p.clone().add(new THREE.Vector3(0, 1, 0)), 0x555555, 10, 2.2);
   const dist = camera.position.distanceTo(p);
-  audio.boom(clamp(1.2 - dist / 120, 0.2, 1));
+  audio.boom(clamp(1.2 - dist / 120, 0.1, 1), spatial(p.x, p.z).pan * 0.7);
   G.shake = Math.max(G.shake, clamp(1 - dist / 40, 0, 1) * 0.6);
   for (const s of [G.player].concat(G.online ? [] : shootables())) {
     if (!s.alive) continue;
@@ -372,6 +461,7 @@ function explode(p, owner) {
 }
 function hurt(from) {
   $('dmg').style.opacity = 1; G.hurtT = 0.4; audio.hurt();
+  if (isTouch && navigator.vibrate) navigator.vibrate(40);
   // a red mark on the side the shot came from
   if (from && from !== G.player) {
     const a = Math.atan2(from.pos.x - G.player.pos.x, from.pos.z - G.player.pos.z) - G.yaw;
@@ -436,7 +526,7 @@ function openChute() {
 function botShot(bot, from, to, def) {
   // sound for everyone in earshot; a tracer when it's near the player
   const P = G.player, d = Math.hypot(from[0] - P.pos.x, from[2] - P.pos.z);
-  if (d < 280) audio.far(def.sound === 'pistol' || def.sound === 'smg' ? 'pistol' : 'rifle', d);
+  heardShot(from, to, def.id);
   if (d < 150 && bot.s.root.visible) {
     fx.tracer(bot.s.muzzle.clone(), new THREE.Vector3(...to));
     fx.flash(bot.s.muzzle, 0.45);
@@ -469,6 +559,7 @@ function updateBots(dt) {
     const d = Math.hypot(s.pos.x - camera.position.x, s.pos.z - camera.position.z);
     const show = s.air !== 'plane' && d < far && (s.alive || (s.deadT = (s.deadT || 0) + dt) < 30);
     if (show) { s.animate(dt, !!b.target); s.root.visible = true; } else s.root.visible = false;
+    footsteps(s, dt);
   }
 }
 
@@ -731,7 +822,7 @@ function onNetMsg(m) {
     if (r.snaps.length > 30) r.snaps.shift();
   } else if (m.t === 'shot') {
     const d = Math.hypot(m.a[0] - P.pos.x, m.a[2] - P.pos.z);
-    if (d < 280) audio.far(m.g === 'pistol' || m.g === 'smg' ? 'pistol' : 'rifle', d);
+    heardShot(m.a, m.b, String(m.g));
     if (d < 160) { fx.tracer(new THREE.Vector3(...m.a), new THREE.Vector3(...m.b)); fx.flash(new THREE.Vector3(...m.a), 0.45); }
   } else if (m.t === 'hit') {
     if (m.to === room.me && P.alive) applyHit(r ? r.s : null, P, clamp(+m.dmg || 0, 0, 300), !!m.head, String(m.how || '').slice(0, 20));
@@ -739,7 +830,7 @@ function onNetMsg(m) {
     if (!r) return;
     r.s.alive = false; r.s.dieT = 0;
     const byMe = m.by === room.me, killer = byMe ? 'You' : m.by ? (G.remotes.get(m.by) || { s: { name: '?' } }).s.name : 'The zone';
-    if (byMe) G.kills++;
+    if (byMe) { G.kills++; killBanner(r.s.name, !!m.head); }
     feed(`<b>${esc(killer)}</b> ➜ ${esc(r.s.name)} <em>${m.head ? 'headshot' : esc(String(m.how || '').slice(0, 20))}</em>`);
     if (G.spectate === r.s) spectateNext();
   } else if (m.t === 'take') {
@@ -780,7 +871,7 @@ function netPose(r) {
     let dy = b.yaw - a.yaw; while (dy > Math.PI) dy -= Math.PI * 2; while (dy < -Math.PI) dy += Math.PI * 2;
     s.pos.set(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, a.z + (b.z - a.z) * f); s.yaw = a.yaw + dy * f;
   } else { s.pos.set(a.x, a.y, a.z); s.yaw = a.yaw; }
-  s.pitch = L.pitch || 0; s.crouching = !!L.c; s.crouch = L.c ? 1 : 0; s.moveSpeed = L.v || 0; s.swim = !!L.sw; s.helm = L.helm || 0;
+  s.pitch = L.pitch || 0; s.crouching = !!L.c; s.crouch = L.c ? 1 : 0; s.moveSpeed = L.v || 0; s.swim = !!L.sw; s.helm = L.helm || 0; s.vest = L.vs || 0;
   s.onGround = true; s.backwards = false;
   const air = L.air || null;
   if (s.air !== air) { s.air = air; s.setChute(air === 'chute'); }
@@ -793,13 +884,14 @@ function updateRemotes(dt) {
     netPose(r);
     const d = Math.hypot(r.s.pos.x - camera.position.x, r.s.pos.z - camera.position.z);
     if (r.s.air !== 'plane' && d < FOG + 30) { r.s.animate(dt, false); r.s.root.visible = true; } else r.s.root.visible = false;
+    footsteps(r.s, dt);
   }
   // tell the others where I am (about 15 times a second)
   G.sendT -= dt / TIME_SCALE;
   if (room && G.sendT <= 0) {
     G.sendT = 1 / 15;
     const P = G.player, p = P.air === 'plane' ? planePos(G.planeT, _p) : P.pos, f = (v) => +v.toFixed(2);
-    room.send({ t: 's', from: room.me, n: ++G.seq, x: f(p.x), y: f(p.y), z: f(p.z), yaw: +P.yaw.toFixed(3), pitch: +G.pitch.toFixed(2), air: P.air || '', c: P.crouching ? 1 : 0, g: P.gunId || '', v: f(P.moveSpeed), al: P.alive ? 1 : 0, helm: P.helm, sw: P.swim ? 1 : 0 });
+    room.send({ t: 's', from: room.me, n: ++G.seq, x: f(p.x), y: f(p.y), z: f(p.z), yaw: +P.yaw.toFixed(3), pitch: +G.pitch.toFixed(2), air: P.air || '', c: P.crouching ? 1 : 0, g: P.gunId || '', v: f(P.moveSpeed), al: P.alive ? 1 : 0, helm: P.helm, vs: P.vest, sw: P.swim ? 1 : 0 });
   }
 }
 
@@ -861,6 +953,9 @@ function pause() {
   if (G.state !== 'play') return;
   G.state = 'paused'; input.unlock();
   $('pause').classList.remove('hidden'); $('p-sound').textContent = 'SOUND: ' + (audio.on ? 'ON' : 'OFF');
+  $('p-sens').value = S.sens;
+  $('p-assist').textContent = 'AIM ASSIST: ' + (S.assist ? 'ON' : 'OFF');
+  $('p-assist').classList.toggle('hidden', !isTouch);
 }
 function resume() { $('pause').classList.add('hidden'); G.state = 'play'; input.lock(); last = performance.now(); }
 
@@ -889,7 +984,17 @@ function frame(now) {
   if (!(rdt > 0)) rdt = 0;
   const dt = rdt * TIME_SCALE;
   fpsT += rdt; fpsN++;
-  if (fpsT > 1) { $('fps').textContent = fpsN + ' fps'; fpsT = 0; fpsN = 0; }
+  if (fpsT > 2) {
+    const fps = fpsN / fpsT;
+    $('fps').textContent = Math.round(fps) + ' fps';
+    // keep it smooth: drop the resolution when the phone struggles, raise it again when there's room
+    if (!G.pr) G.pr = BASE_PR;
+    if (G.state === 'play' && !params.has('fixedres')) {
+      const next = fps < 26 ? Math.max(0.55, G.pr - 0.15) : fps > 52 ? Math.min(BASE_PR, G.pr + 0.1) : G.pr;
+      if (Math.abs(next - G.pr) > 0.01) { G.pr = next; renderer.setPixelRatio(G.pr); renderer.setSize(innerWidth, innerHeight); }
+    }
+    fpsT = 0; fpsN = 0;
+  }
   const P = G.player;
   if (!P) return;
   if (G.state === 'play' || G.state === 'over') {
@@ -897,6 +1002,7 @@ function frame(now) {
     const sens = 0.0024 * S.sens * (G.aimK > 0.5 ? (gun() && gun().def.scope ? 0.25 : 0.6) : 1);
     G.yaw -= k.lookX * sens; G.pitch = clamp(G.pitch - k.lookY * sens, -1.3, 1.35);
     if (G.recoil > 0) { const r = Math.min(G.recoil, dt * (k.fire ? 0.06 : 0.35) + G.recoil * dt * 4); G.pitch -= r * 0.8; G.recoil -= r; }
+    if (G.state === 'play') aimAssist(rdt, !!k.fire);
     G.matchT += P.alive && G.state === 'play' ? dt : 0;
     let aiming = false;
     // the plane flies on whatever the player is doing (the computer players jump from it)
@@ -951,6 +1057,23 @@ function frame(now) {
     G.grenades.update(dt, explode);
     updateBots(dt);
     if (G.online) updateRemotes(dt);
+    // background: the sea near the coast, wind up high, the plane's engines
+    {
+      const lp = myPos(), gh = G.world.heightAt(lp.x, lp.z);
+      const planeD = G.plane ? G.plane.position.distanceTo(camera.position) : 1e9;
+      audio.ambience(clamp(1 - (gh - 1) / 9, 0, 1), P.air === 'fall' ? 1 : P.air ? 0.5 : clamp((lp.y - 15) / 30, 0, 0.6), P.air === 'plane' ? 1 : clamp(1 - planeD / 500, 0, 1));
+    }
+    if (G.zone) {
+      const Z = G.zone;
+      if (Z.phase !== G.zonePhase) { if (Z.phase === 'shrink' && G.zonePhase) { toast('ZONE IS SHRINKING!', 2.5); audio.alarm(); } G.zonePhase = Z.phase; G.warned = false; }
+      if (Z.phase === 'wait' && Z.t < 10 && !G.warned && !Z.done) { G.warned = true; toast('ZONE SHRINKS IN 10 S', 2); audio.zoneTick(); }
+    }
+    // low health: red edges and a heartbeat
+    const low = P.alive && P.health < 30 && G.state === 'play';
+    $('lowhp').classList.toggle('on', low);
+    if (low) { G.beatT -= rdt; if (G.beatT <= 0) { G.beatT = 0.9; audio.heartbeat(); } }
+    updateDamageNumbers(rdt);
+    if (banT > 0) { banT -= rdt; if (banT <= 0) $('killban').classList.remove('show'); }
     // training targets fall when hit and stand up again
     for (const t of G.targets) {
       if (!t.alive) { t.respawnT -= dt; if (t.respawnT <= 0) { t.revive(); t.yaw = Math.random() * Math.PI * 2; } }
@@ -970,6 +1093,7 @@ function frame(now) {
       } else if (!P.alive) { P.revive(); P.pos.set(13, G.world.heightAt(13, 13) + 0.1, 13); feed('Back on your feet.'); }
     }
   } else if (G.state === 'menu') {
+    audio.ambience(0.35, 0.15, 0);
     G.menuA = (G.menuA || 0) + rdt * 0.05;
     camera.position.set(Math.sin(G.menuA) * 90, 55, Math.cos(G.menuA) * 90);
     camera.lookAt(0, 8, 0);
@@ -985,6 +1109,8 @@ function frame(now) {
 $('start').onclick = () => startMatch('battle');
 $('training').onclick = () => startMatch('training');
 $('m-sens').addEventListener('input', (e) => { S.sens = +e.target.value; save(); });
+$('p-sens').addEventListener('input', (e) => { S.sens = +e.target.value; save(); });
+$('p-assist').onclick = () => { S.assist = !S.assist; save(); $('p-assist').textContent = 'AIM ASSIST: ' + (S.assist ? 'ON' : 'OFF'); };
 $('pauseBtn').onclick = () => (G.state === 'paused' ? resume() : pause());
 $('p-resume').onclick = resume;
 $('p-menu').onclick = showMenu;

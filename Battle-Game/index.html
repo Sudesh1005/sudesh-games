@@ -26,6 +26,9 @@
     <div id="hitm"></div>
     <div id="dmg"></div>
     <div id="hitdir"></div>
+    <div id="lowhp"></div>
+    <div id="dmgnums"></div>
+    <div id="killban"></div>
     <div id="outzone"></div>
     <div id="scope"><i></i></div>
     <div id="compass"><div id="compass-strip"></div><i></i></div>
@@ -126,6 +129,9 @@
       <h2>PAUSED</h2>
       <button id="p-resume" class="primary">RESUME</button>
       <button id="p-sound">SOUND: ON</button>
+      <button id="p-assist" class="hidden">AIM ASSIST: ON</button>
+      <label class="lbl" for="p-sens">Look speed</label>
+      <input id="p-sens" type="range" min="0.4" max="2.2" step="0.1">
       <button id="p-menu">QUIT TO MENU</button>
     </div>
   </div>
@@ -173,7 +179,7 @@
   </div>
 
   <div id="clickplay" class="hidden">Click to play</div>
-  <div id="loading"><div class="spinner"></div><div id="loadtxt">Building the island…</div></div>
+  <div id="loading"><div class="spinner"></div><div id="loadtxt">Building the island…</div><p id="tip"></p></div>
   <div id="err"></div>
 
   <script>

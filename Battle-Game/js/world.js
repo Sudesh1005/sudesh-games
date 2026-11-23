@@ -86,6 +86,24 @@ function finalHeight(x, z) {
   return h;
 }
 
+/* ------------------------------------------------------------------ surface detail */
+// Grey-scale detail maps that multiply the vertex colours: speckled ground, plastered walls.
+function detailTexture(kind) {
+  const N = 256, c = document.createElement('canvas'); c.width = c.height = N;
+  const g = c.getContext('2d'), img = g.createImageData(N, N), R = rng(kind === 'ground' ? 3 : 8);
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    const k = (j * N + i) * 4;
+    let v;
+    if (kind === 'ground') v = 0.8 + R() * 0.2 - (fbm(i / 18, j / 18, 2) - 0.5) * 0.25;
+    else v = 0.9 + R() * 0.07 - (fbm(i / 40 + 7, j / 40, 3) - 0.5) * 0.12 - (j % 64 < 1 ? 0.06 : 0);
+    v = Math.max(0, Math.min(1, v)) * 255;
+    img.data[k] = img.data[k + 1] = img.data[k + 2] = v; img.data[k + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4;
+  return t;
+}
+
 /* ------------------------------------------------------------------ collision world */
 class Grid {
   constructor(cell = 16) { this.cell = cell; this.map = new Map(); }
@@ -249,7 +267,8 @@ export class World {
     }
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     geo.computeVertexNormals();
-    const m = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }));
+    const tex = detailTexture('ground'); tex.repeat.set((2 * HALF) / 6, (2 * HALF) / 6);
+    const m = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, map: tex }));
     m.receiveShadow = this.q !== 'low';
     this.group.add(m);
   }
@@ -454,11 +473,18 @@ export class World {
       const nor = g.attributes.normal;
       for (let k = 0; k < n; k++) { const s = nor.getY(k) < -0.5 ? 0.6 : Math.abs(nor.getX(k)) > 0.5 ? 0.88 : 1; c[k * 3] = col.r * s; c[k * 3 + 1] = col.g * s; c[k * 3 + 2] = col.b * s; }
       g.setAttribute('color', new THREE.BufferAttribute(c, 3));
+      // texture coordinates in metres (one tile per 2.5 m) so the plaster isn't stretched on long walls
+      const uv = g.attributes.uv;
+      for (let k = 0; k < n; k++) {
+        const nx = Math.abs(nor.getX(k)), ny = Math.abs(nor.getY(k));
+        const su = nx > 0.5 ? d : w, sv = ny > 0.5 ? d : h;
+        uv.setXY(k, (uv.getX(k) * su) / 2.5, (uv.getY(k) * sv) / 2.5);
+      }
       geos.push(g);
     }
     const merged = mergeGeometries(geos);
     for (const g of geos) g.dispose();
-    const m = new THREE.Mesh(merged, new THREE.MeshLambertMaterial({ vertexColors: true }));
+    const m = new THREE.Mesh(merged, new THREE.MeshLambertMaterial({ vertexColors: true, map: detailTexture('wall') }));
     m.castShadow = this.q !== 'low'; m.receiveShadow = this.q !== 'low';
     this.group.add(m);
     this.parts = parts;

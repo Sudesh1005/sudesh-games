@@ -2,7 +2,7 @@
 
 A third-person island battle game in the browser: land on the island, find guns, fight, and be the last one standing. Built with plain HTML, CSS and JavaScript plus [three.js](https://threejs.org) from a CDN, with no build step. The island, buildings, guns and sounds are generated in code; the soldier uses the same character models as Kadal Nagaram (`../GTA-Game/models/`).
 
-## Status: step 4 of 5 (online with friends)
+## Status: all 5 steps done
 
 | Step | What | Status |
 |---|---|---|
@@ -10,7 +10,7 @@ A third-person island battle game in the browser: land on the island, find guns,
 | 2 | Loot, armour, med kits, 5 guns, shrinking zone, plane + parachute | done |
 | 3 | Computer players (single-player battles) | done |
 | 4 | Online with friends (2–6 players, last one standing wins) | done |
-| 5 | Sound, effects, phone tuning, polish | next |
+| 5 | Sound, effects, phone tuning, polish | done |
 
 ## Battle (step 2)
 
@@ -40,6 +40,12 @@ Armour vests absorb half of each hit until the armour runs out; helmets cut head
 - When you're out you can **SPECTATE** the players still alive (NEXT PLAYER / RESULTS). When the match is over, the host starts the **NEXT MATCH** with whoever is in the room (new friends can join between matches).
 - How it works: the browsers connect directly with WebRTC using [PeerJS](https://peerjs.com) (loaded only when you play online); the host's browser passes every message on to the others. Each phone moves its own soldier and sends where it is about 15 times a second; the others draw it slightly behind real time so it moves smoothly. The shooter's screen decides what a bullet hits and tells the player who was hit, whose screen takes the damage (armour, helmet) and announces a death. Picking up and dropping loot is shared, so an item can only be taken once. If someone leaves, they're out of the match. Some networks (strict office/college Wi-Fi, some mobile data) block direct connections.
 
+## Sound, effects and phone tuning (step 5)
+
+- **Sound you can play by**: other players' shots and footsteps come from their side (left / right) and get quieter and duller with distance, with an echo far away; a whiz when a bullet passes close; the sea near the coast, wind up high, the plane's engines; an alarm when the zone starts shrinking (and a warning 10 s before); a heartbeat when your health is low.
+- **Effects**: helmets and armour vests show on everyone (level 1 olive, level 2 dark blue); damage numbers over the people you hit (yellow for headshots); an ELIMINATED / HEADSHOT banner with your kill count; red edges when health is low; speckled ground and plastered walls.
+- **Phones**: gentle aim assist when an enemy is right next to the crosshair (pause menu: AIM ASSIST on/off); the resolution drops by itself when the game runs slowly and comes back when there's room; a short vibration when you're hit or get a kill; look speed in the pause menu; tips on the loading screen.
+
 ## Training ground (step 1)
 
 - **The island** (about 1 km across): Kovil Town with 1 and 2 floor buildings and a temple tower, the fishing village Meenavar Kuppam on the beach, Thottam Farm, Malai Camp on the hill with barracks, a watch tower and a shooting range, Kaadu Hills, roads between them, forest, palms, rocks, bushes and the sea.
@@ -65,7 +71,7 @@ python -m http.server 8000
 # open http://localhost:8000/Battle-Game/
 ```
 
-Testing aids (URL options): `?mp=host&name=A` / `?mp=join&room=CODE&name=B` create / join an online room automatically, `?auto` starts a battle (`?auto=training` the training ground), `?bots=5` sets how many computer players, `?level=hard`, `?god` makes you unhurtable, `?seed=7` fixes the loot, zone and plane route, `?speed=10` runs time faster, `?touch` shows phone controls, `?q=low|med|high` graphics, `?simple` skips the character model, `?cam=side|front` looks at the soldier from the side or front.
+Testing aids (URL options): `?mp=host&name=A` / `?mp=join&room=CODE&name=B` create / join an online room automatically, `?auto` starts a battle (`?auto=training` the training ground), `?bots=5` sets how many computer players, `?level=hard`, `?god` makes you unhurtable, `?fixedres` turns off the automatic resolution, `?seed=7` fixes the loot, zone and plane route, `?speed=10` runs time faster, `?touch` shows phone controls, `?q=low|med|high` graphics, `?simple` skips the character model, `?cam=side|front` looks at the soldier from the side or front.
 
 ## Project layout
 

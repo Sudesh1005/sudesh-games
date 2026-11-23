@@ -2,12 +2,14 @@
 // the island (walls, floors, stairs, trees, rocks, ground), the rifle-holding pose, and the hit areas
 // bullets are tested against. Used for the player and (later) everyone else.
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { makeHuman, animateHuman } from './human.js';
 import { modelLib, makeModelHuman } from './models.js';
 import { WATER_Y, HALF } from './world.js';
 import { gunModel } from './weapons.js';
 import { makeChute } from './drop.js';
 
+const _vp = new THREE.Vector3();
 export const RADIUS = 0.34, HEIGHT = 1.75, CROUCH_H = 1.2, STEP = 0.55;
 const GRAV = 22, JUMP = 6.4;
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -39,6 +41,14 @@ export class Soldier {
     this.root.add(this.gunHolder);
     if (this.gunId) { const id = this.gunId; this.gunId = null; this.setGun(id); }
     this.chute = null;
+    // joints that gear hangs on: the model's own bones, or the built-in skeleton's
+    this.joints = { head: this.h.head, chest: this.h.spine, model: false };
+    if (this.h.model) {
+      const bones = {};
+      this.h.mesh.traverse((o) => { if (o.isBone) bones[o.name.replace(/^mixamorig[:_]?/i, '')] = o; });
+      if (bones.Head) this.joints = { head: bones.Head, chest: bones.Spine2 || bones.Spine1 || bones.Spine, model: true };
+    }
+    this.gearV = -1; this.gearH = -1; this.gear = [];
     if (this.scene) this.scene.add(this.root);
   }
   addTo(scene) { this.scene = scene; scene.add(this.root); }
@@ -57,6 +67,34 @@ export class Soldier {
   setChute(on) {
     if (on && !this.chute) { this.chute = makeChute(); this.root.add(this.chute); }
     if (!on && this.chute) { this.root.remove(this.chute); this.chute = null; }
+  }
+
+  // helmet and armour vest, shown when worn (level 1 olive, level 2 dark blue)
+  updateGear() {
+    if (this.gearV === this.vest && this.gearH === this.helm) return;
+    this.gearV = this.vest; this.gearH = this.helm;
+    for (const m of this.gear) m.parent && m.parent.remove(m);
+    this.gear = [];
+    const col = [0, 0x5f6640, 0x2c3a55];
+    const put = (bone, mesh, y, z) => {
+      if (!bone) return;
+      bone.updateWorldMatrix(true, false);
+      const sc = this.joints.model ? bone.getWorldScale(new THREE.Vector3()).x || 1 : 1;
+      mesh.scale.multiplyScalar(1 / sc); mesh.position.set(0, y / sc, z / sc); mesh.castShadow = !this.opts.low;
+      bone.add(mesh); this.gear.push(mesh);
+    };
+    if (this.helm) {
+      const m = new THREE.Mesh(new THREE.SphereGeometry(0.135, 14, 8, 0, Math.PI * 2, 0, Math.PI * 0.56), new THREE.MeshStandardMaterial({ color: col[this.helm], roughness: 0.6, metalness: 0.2 }));
+      m.scale.set(1, 0.95, 1.1);
+      put(this.joints.head, m, this.joints.model ? 0.12 : 0.19, -0.005);
+    }
+    this.vestMesh = null;
+    if (this.vest) {
+      // the vest follows the chest each frame (placed on the body, not in the bone's own axes)
+      const m = new THREE.Mesh(new RoundedBoxGeometry(0.41, 0.4, 0.29, 2, 0.07), new THREE.MeshStandardMaterial({ color: col[this.vest], roughness: 0.85 }));
+      m.castShadow = !this.opts.low;
+      this.root.add(m); this.gear.push(m); this.vestMesh = m;
+    }
   }
 
   get height() { return HEIGHT - (HEIGHT - CROUCH_H) * this.crouch; }
@@ -142,6 +180,7 @@ export class Soldier {
     if (!this.alive) { this.deathPose(dt); return; }
     this.root.visible = this.air !== 'plane';
     this.gunHolder.visible = !this.air;
+    this.updateGear();
     if (this.air === 'fall' || this.air === 'chute') { this.airPose(dt); return; }
     const amt = Math.min(1, sp / 2);
     h.gait = clamp((sp - 2.2) / 3.5, 0, 1);
@@ -174,10 +213,22 @@ export class Soldier {
       this.recoilKick = Math.max(0, kick - dt * 8);
     }
     if (h.proc) h.applyProc();
+    this.placeVest();
     if (this.gunMesh) {
       this.gunMesh.group.updateMatrixWorld(true);
       this.muzzle.copy(this.gunMesh.muzzle).applyMatrix4(this.gunMesh.group.matrixWorld);
     }
+  }
+
+  placeVest() {
+    const v = this.vestMesh, b = this.joints.chest;
+    if (!v || !b) return;
+    this.root.updateMatrixWorld(true);
+    b.getWorldPosition(_vp); this.root.worldToLocal(_vp);
+    // the model's spine runs along the back: move the vest forward onto the chest
+    const up = this.joints.model ? 0.0 : 0.2, fwd = this.joints.model ? 0.085 : 0.01, ry = this.h.spine.rotation.y;
+    v.position.set(_vp.x + Math.sin(ry) * fwd, _vp.y + up, _vp.z + Math.cos(ry) * fwd);
+    v.rotation.set(this.h.spine.rotation.x, ry, 0);
   }
 
   // sky-diving (face down, arms and legs spread) or hanging under the canopy
